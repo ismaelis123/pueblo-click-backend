@@ -24,7 +24,7 @@ const toggleAvailability = async (req, res) => {
 const getOrders = async (req, res) => {
   try {
     const orders = await Order.find({ mandadito: req.user._id })
-      .populate('client', 'name phone')
+      .populate('client', 'name phone profilePhoto')
       .sort({ createdAt: -1 });
     res.json(orders);
   } catch (error) {
@@ -35,7 +35,7 @@ const getOrders = async (req, res) => {
 const getPendingOrders = async (req, res) => {
   try {
     const orders = await Order.find({ status: 'pending' })
-      .populate('client', 'name phone')
+      .populate('client', 'name phone profilePhoto')
       .sort({ createdAt: -1 });
     res.json(orders);
   } catch (error) {
@@ -43,7 +43,7 @@ const getPendingOrders = async (req, res) => {
   }
 };
 
-// MODIFICADO: Al aceptar, se descuenta el crédito inmediatamente
+// ACEPTAR ORDEN - DESCUENTA CRÉDITO INMEDIATAMENTE
 const acceptOrder = async (req, res) => {
   try {
     const order = await Order.findById(req.params.orderId);
@@ -53,7 +53,7 @@ const acceptOrder = async (req, res) => {
     
     // Verificar crédito suficiente ANTES de aceptar
     if (req.user.credit < order.amount) {
-      return res.status(400).json({ message: 'Crédito insuficiente. Recarga para aceptar mandados' });
+      return res.status(400).json({ message: `Crédito insuficiente. Necesitas C$${order.amount} para aceptar este mandado.` });
     }
 
     // DESCONTAR CRÉDITO AL ACEPTAR
@@ -77,7 +77,7 @@ const acceptOrder = async (req, res) => {
   }
 };
 
-// MODIFICADO: Mandadito marca como entregado (NO descuenta crédito, ya se descontó al aceptar)
+// MARCAR COMO ENTREGADO
 const markAsDelivered = async (req, res) => {
   try {
     const order = await Order.findById(req.params.orderId);
@@ -91,7 +91,7 @@ const markAsDelivered = async (req, res) => {
     }
 
     order.mandaditoDeliveredAt = new Date();
-    order.status = 'delivered'; // Entregado, esperando confirmación del cliente
+    order.status = 'delivered';
     await order.save();
 
     const io = req.app.get('io');
@@ -103,60 +103,7 @@ const markAsDelivered = async (req, res) => {
   }
 };
 
-// MODIFICADO: Cliente confirma que recibió - se completa la orden
-const completeOrderByMandadito = async (req, res) => {
-  // Este endpoint ya no descuenta crédito, solo cambia estado
-  try {
-    const order = await Order.findById(req.params.orderId);
-
-    if (!order) return res.status(404).json({ message: 'Orden no encontrada' });
-    if (!order.mandadito || order.mandadito.toString() !== req.user._id.toString()) {
-      return res.status(403).json({ message: 'No autorizado' });
-    }
-    if (order.status === 'completed') {
-      return res.status(400).json({ message: 'Esta orden ya está completada' });
-    }
-
-    order.mandaditoDeliveredAt = new Date();
-    order.status = 'delivered';
-    await order.save();
-
-    const io = req.app.get('io');
-    io.emit('orderUpdated', order);
-
-    res.json(order);
-  } catch (error) {
-    res.status(500).json({ message: error.message });
-  }
-};
-
-// NUEVO: Cliente confirma que recibió el pedido
-const clientConfirmReceived = async (req, res) => {
-  try {
-    const order = await Order.findById(req.params.orderId);
-
-    if (!order) return res.status(404).json({ message: 'Orden no encontrada' });
-    if (order.client.toString() !== req.user._id.toString()) {
-      return res.status(403).json({ message: 'No autorizado' });
-    }
-    if (order.status !== 'delivered') {
-      return res.status(400).json({ message: 'El mandadito aún no ha marcado el pedido como entregado' });
-    }
-
-    order.clientConfirmedAt = new Date();
-    order.status = 'completed';
-    await order.save();
-
-    const io = req.app.get('io');
-    io.emit('orderUpdated', order);
-
-    res.json({ order, message: '¡Gracias por confirmar! El pedido ha sido completado.' });
-  } catch (error) {
-    res.status(500).json({ message: error.message });
-  }
-};
-
-// MODIFICADO: Solicitar recarga con número de admin
+// SOLICITAR RECARGA - CON NÚMERO DE ADMIN
 const requestRecharge = async (req, res) => {
   try {
     const { amount, reference } = req.body;
@@ -169,10 +116,10 @@ const requestRecharge = async (req, res) => {
       reference,
     });
 
-    // Devolver también el número del admin para que el mandadito sepa dónde depositar
     res.json({
       message: 'Solicitud de recarga enviada. Realiza el depósito y espera confirmación.',
-      adminPhone: '85202908', // Número del admin
+      adminPhone: '85202908',
+      adminMessage: `Hola, realicé un depósito de C$${amount} para recargar mi crédito. Referencia: ${reference}`,
       deposit,
     });
   } catch (error) {
@@ -197,8 +144,6 @@ module.exports = {
   getPendingOrders,
   acceptOrder,
   markAsDelivered,
-  completeOrderByMandadito,
-  clientConfirmReceived,
   requestRecharge,
   getEarningsReport,
 };

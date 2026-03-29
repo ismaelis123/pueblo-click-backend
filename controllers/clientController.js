@@ -23,9 +23,45 @@ const createOrder = async (req, res) => {
 const getClientOrders = async (req, res) => {
   try {
     const orders = await Order.find({ client: req.user._id })
-      .populate('mandadito', 'name phone profilePhoto rating')
+      .populate('mandadito', 'name phone profilePhoto rating totalRatings')
       .sort({ createdAt: -1 });
     res.json(orders);
+  } catch (error) {
+    res.status(500).json({ message: error.message });
+  }
+};
+
+// Obtener mandaditos disponibles
+const getAvailableMandaditos = async (req, res) => {
+  try {
+    const mandaditos = await User.find({ 
+      role: 'mandadito', 
+      isActive: true,
+      isAvailable: true 
+    }).select('name phone profilePhoto rating totalRatings');
+    res.json(mandaditos);
+  } catch (error) {
+    res.status(500).json({ message: error.message });
+  }
+};
+
+// Obtener perfil de un mandadito específico
+const getMandaditoProfile = async (req, res) => {
+  try {
+    const mandadito = await User.findById(req.params.id)
+      .select('name phone profilePhoto rating totalRatings motoPhotos');
+    
+    if (!mandadito || mandadito.role !== 'mandadito') {
+      return res.status(404).json({ message: 'Mandadito no encontrado' });
+    }
+    
+    // Obtener calificaciones del mandadito
+    const ratings = await Rating.find({ mandadito: mandadito._id })
+      .populate('client', 'name')
+      .sort({ createdAt: -1 })
+      .limit(10);
+    
+    res.json({ mandadito, ratings });
   } catch (error) {
     res.status(500).json({ message: error.message });
   }
@@ -35,17 +71,12 @@ const confirmReceived = async (req, res) => {
   try {
     const order = await Order.findById(req.params.orderId);
 
-    if (!order) {
-      return res.status(404).json({ message: 'Orden no encontrada' });
-    }
+    if (!order) return res.status(404).json({ message: 'Orden no encontrada' });
     if (order.client.toString() !== req.user._id.toString()) {
-      return res.status(403).json({ message: 'No autorizado para esta orden' });
+      return res.status(403).json({ message: 'No autorizado' });
     }
     if (order.status !== 'delivered') {
-      return res.status(400).json({ 
-        message: 'El mandadito aún no ha marcado el pedido como entregado',
-        currentStatus: order.status 
-      });
+      return res.status(400).json({ message: 'El mandadito aún no ha marcado el pedido como entregado' });
     }
 
     order.clientConfirmedAt = new Date();
@@ -55,12 +86,8 @@ const confirmReceived = async (req, res) => {
     const io = req.app.get('io');
     io.emit('orderUpdated', order);
 
-    res.json({ 
-      order, 
-      message: '¡Gracias por confirmar! El pedido ha sido completado.' 
-    });
+    res.json({ order, message: '¡Gracias por confirmar! El pedido ha sido completado.' });
   } catch (error) {
-    console.error('Error en confirmReceived:', error);
     res.status(500).json({ message: error.message });
   }
 };
@@ -68,13 +95,20 @@ const confirmReceived = async (req, res) => {
 const rateMandadito = async (req, res) => {
   try {
     const { orderId, score, comment } = req.body;
+    
     const order = await Order.findById(orderId);
     if (!order) return res.status(404).json({ message: 'Orden no encontrada' });
-    if (order.status !== 'completed') return res.status(400).json({ message: 'La orden debe estar completada para calificar' });
-    if (order.client.toString() !== req.user._id.toString()) return res.status(403).json({ message: 'No autorizado' });
+    if (order.status !== 'completed') {
+      return res.status(400).json({ message: 'La orden debe estar completada para calificar' });
+    }
+    if (order.client.toString() !== req.user._id.toString()) {
+      return res.status(403).json({ message: 'No autorizado' });
+    }
 
     const existingRating = await Rating.findOne({ order: orderId });
-    if (existingRating) return res.status(400).json({ message: 'Ya calificaste esta orden' });
+    if (existingRating) {
+      return res.status(400).json({ message: 'Ya calificaste esta orden' });
+    }
 
     const rating = await Rating.create({
       order: orderId,
@@ -84,14 +118,19 @@ const rateMandadito = async (req, res) => {
       comment: comment || '',
     });
 
+    // Actualizar promedio del mandadito
     const allRatings = await Rating.find({ mandadito: order.mandadito });
     const avg = allRatings.reduce((sum, r) => sum + r.score, 0) / allRatings.length;
+    
     await User.findByIdAndUpdate(order.mandadito, { 
       rating: avg, 
       totalRatings: allRatings.length 
     });
 
-    res.status(201).json(rating);
+    res.status(201).json({ 
+      rating, 
+      message: '¡Calificación guardada! Gracias por tu feedback.' 
+    });
   } catch (error) {
     console.error('Error en rateMandadito:', error);
     res.status(500).json({ message: error.message });
@@ -101,6 +140,8 @@ const rateMandadito = async (req, res) => {
 module.exports = {
   createOrder,
   getClientOrders,
+  getAvailableMandaditos,
+  getMandaditoProfile,
   confirmReceived,
   rateMandadito,
 };
