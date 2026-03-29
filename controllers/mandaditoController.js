@@ -43,12 +43,22 @@ const getPendingOrders = async (req, res) => {
   }
 };
 
+// MODIFICADO: Al aceptar, se descuenta el crédito inmediatamente
 const acceptOrder = async (req, res) => {
   try {
     const order = await Order.findById(req.params.orderId);
+
     if (!order) return res.status(404).json({ message: 'Orden no encontrada' });
     if (order.status !== 'pending') return res.status(400).json({ message: 'Orden no disponible' });
-    if (req.user.credit < order.amount) return res.status(400).json({ message: 'Crédito insuficiente' });
+    
+    // Verificar crédito suficiente ANTES de aceptar
+    if (req.user.credit < order.amount) {
+      return res.status(400).json({ message: 'Crédito insuficiente. Recarga para aceptar mandados' });
+    }
+
+    // DESCONTAR CRÉDITO AL ACEPTAR
+    req.user.credit -= order.amount;
+    await req.user.save();
 
     order.mandadito = req.user._id;
     order.status = 'accepted';
@@ -56,35 +66,97 @@ const acceptOrder = async (req, res) => {
 
     const io = req.app.get('io');
     io.emit('orderUpdated', order);
-    res.json(order);
+
+    res.json({ 
+      order, 
+      creditRestante: req.user.credit,
+      message: `Orden aceptada. Se descontaron C$${order.amount} de tu crédito.`
+    });
   } catch (error) {
     res.status(500).json({ message: error.message });
   }
 };
 
-const completeOrderByMandadito = async (req, res) => {
+// MODIFICADO: Mandadito marca como entregado (NO descuenta crédito, ya se descontó al aceptar)
+const markAsDelivered = async (req, res) => {
   try {
     const order = await Order.findById(req.params.orderId);
+
     if (!order) return res.status(404).json({ message: 'Orden no encontrada' });
-    if (!order.mandadito || order.mandadito.toString() !== req.user._id.toString()) return res.status(403).json({ message: 'No autorizado' });
-    if (order.status === 'mandadito_completed' || order.status === 'finished') return res.status(400).json({ message: 'Ya completaste' });
-    if (req.user.credit < order.amount) return res.status(400).json({ message: 'Crédito insuficiente' });
+    if (!order.mandadito || order.mandadito.toString() !== req.user._id.toString()) {
+      return res.status(403).json({ message: 'No autorizado' });
+    }
+    if (order.status !== 'accepted') {
+      return res.status(400).json({ message: 'La orden no está en estado aceptado' });
+    }
 
-    req.user.credit -= order.amount;
-    await req.user.save();
-
-    order.mandaditoCompletedAt = new Date();
-    order.status = order.status === 'client_completed' ? 'finished' : 'mandadito_completed';
+    order.mandaditoDeliveredAt = new Date();
+    order.status = 'delivered'; // Entregado, esperando confirmación del cliente
     await order.save();
 
     const io = req.app.get('io');
     io.emit('orderUpdated', order);
+
+    res.json({ order, message: 'Pedido marcado como entregado. Esperando confirmación del cliente.' });
+  } catch (error) {
+    res.status(500).json({ message: error.message });
+  }
+};
+
+// MODIFICADO: Cliente confirma que recibió - se completa la orden
+const completeOrderByMandadito = async (req, res) => {
+  // Este endpoint ya no descuenta crédito, solo cambia estado
+  try {
+    const order = await Order.findById(req.params.orderId);
+
+    if (!order) return res.status(404).json({ message: 'Orden no encontrada' });
+    if (!order.mandadito || order.mandadito.toString() !== req.user._id.toString()) {
+      return res.status(403).json({ message: 'No autorizado' });
+    }
+    if (order.status === 'completed') {
+      return res.status(400).json({ message: 'Esta orden ya está completada' });
+    }
+
+    order.mandaditoDeliveredAt = new Date();
+    order.status = 'delivered';
+    await order.save();
+
+    const io = req.app.get('io');
+    io.emit('orderUpdated', order);
+
     res.json(order);
   } catch (error) {
     res.status(500).json({ message: error.message });
   }
 };
 
+// NUEVO: Cliente confirma que recibió el pedido
+const clientConfirmReceived = async (req, res) => {
+  try {
+    const order = await Order.findById(req.params.orderId);
+
+    if (!order) return res.status(404).json({ message: 'Orden no encontrada' });
+    if (order.client.toString() !== req.user._id.toString()) {
+      return res.status(403).json({ message: 'No autorizado' });
+    }
+    if (order.status !== 'delivered') {
+      return res.status(400).json({ message: 'El mandadito aún no ha marcado el pedido como entregado' });
+    }
+
+    order.clientConfirmedAt = new Date();
+    order.status = 'completed';
+    await order.save();
+
+    const io = req.app.get('io');
+    io.emit('orderUpdated', order);
+
+    res.json({ order, message: '¡Gracias por confirmar! El pedido ha sido completado.' });
+  } catch (error) {
+    res.status(500).json({ message: error.message });
+  }
+};
+
+// MODIFICADO: Solicitar recarga con número de admin
 const requestRecharge = async (req, res) => {
   try {
     const { amount, reference } = req.body;
@@ -97,7 +169,12 @@ const requestRecharge = async (req, res) => {
       reference,
     });
 
-    res.json({ message: 'Solicitud de recarga enviada', deposit });
+    // Devolver también el número del admin para que el mandadito sepa dónde depositar
+    res.json({
+      message: 'Solicitud de recarga enviada. Realiza el depósito y espera confirmación.',
+      adminPhone: '85202908', // Número del admin
+      deposit,
+    });
   } catch (error) {
     res.status(500).json({ message: error.message });
   }
@@ -105,7 +182,7 @@ const requestRecharge = async (req, res) => {
 
 const getEarningsReport = async (req, res) => {
   try {
-    const orders = await Order.find({ mandadito: req.user._id, status: 'finished' });
+    const orders = await Order.find({ mandadito: req.user._id, status: 'completed' });
     const totalEarnings = orders.length * 5;
     res.json({ totalOrders: orders.length, totalEarnings, orders });
   } catch (error) {
@@ -119,7 +196,9 @@ module.exports = {
   getOrders,
   getPendingOrders,
   acceptOrder,
+  markAsDelivered,
   completeOrderByMandadito,
+  clientConfirmReceived,
   requestRecharge,
   getEarningsReport,
 };

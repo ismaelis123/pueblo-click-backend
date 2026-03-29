@@ -11,6 +11,7 @@ const userSchema = new mongoose.Schema(
     motoPhotos: { type: [String], default: [] },
     credit: { type: Number, default: 0 },
     isAvailable: { type: Boolean, default: true },
+    isActive: { type: Boolean, default: true }, // NUEVO: para bloquear usuarios
     rating: { type: Number, default: 0 },
     totalRatings: { type: Number, default: 0 },
   },

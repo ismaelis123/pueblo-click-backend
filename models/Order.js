@@ -9,11 +9,11 @@ const orderSchema = new mongoose.Schema(
     deliveryAddress: { type: String, required: true },
     status: {
       type: String,
-      enum: ['pending', 'accepted', 'client_completed', 'mandadito_completed', 'finished'],
+      enum: ['pending', 'accepted', 'delivered', 'completed', 'cancelled'],
       default: 'pending',
     },
-    clientCompletedAt: { type: Date, default: null },
-    mandaditoCompletedAt: { type: Date, default: null },
+    clientConfirmedAt: { type: Date, default: null }, // Cliente confirma que recibió
+    mandaditoDeliveredAt: { type: Date, default: null }, // Mandadito marcó como entregado
     amount: { type: Number, default: 5 },
   },
   { timestamps: true }

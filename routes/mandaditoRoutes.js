@@ -7,7 +7,7 @@ const {
   getOrders,
   getPendingOrders,
   acceptOrder,
-  completeOrderByMandadito,
+  markAsDelivered,
   requestRecharge,
   getEarningsReport,
 } = require('../controllers/mandaditoController');
@@ -21,7 +21,7 @@ router.put('/availability', toggleAvailability);
 router.get('/orders', getOrders);
 router.get('/orders/pending', getPendingOrders);
 router.put('/orders/:orderId/accept', acceptOrder);
-router.put('/orders/:orderId/complete', completeOrderByMandadito);
+router.put('/orders/:orderId/deliver', markAsDelivered); // Cambiado: marcar como entregado
 router.post('/recharge', requestRecharge);
 router.get('/earnings', getEarningsReport);
 
