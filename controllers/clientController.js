@@ -2,24 +2,67 @@ const Order = require('../models/Order');
 const Rating = require('../models/Rating');
 const User = require('../models/User');
 
+// Crear orden - AHORA FUNCIONA CON ASIGNACIÓN DIRECTA
 const createOrder = async (req, res) => {
   try {
-    const { description, pickupAddress, deliveryAddress } = req.body;
-    const order = await Order.create({
+    const { description, pickupAddress, deliveryAddress, mandaditoId } = req.body;
+    
+    console.log('📝 Creando orden con datos:', { description, pickupAddress, deliveryAddress, mandaditoId });
+    
+    const orderData = {
       client: req.user._id,
       description,
       pickupAddress,
       deliveryAddress,
-      status: 'pending',
-    });
+      amount: 5,
+    };
+    
+    // Si se asignó un mandadito específico
+    if (mandaditoId && mandaditoId !== 'undefined' && mandaditoId !== 'null') {
+      // Verificar que el mandadito existe y está activo
+      const mandadito = await User.findById(mandaditoId);
+      if (!mandadito || mandadito.role !== 'mandadito') {
+        return res.status(404).json({ message: 'Mandadito no encontrado' });
+      }
+      
+      orderData.mandadito = mandaditoId;
+      orderData.status = 'pending_confirmation'; // Esperando confirmación del mandadito
+    } else {
+      orderData.status = 'pending'; // Disponible para cualquier mandadito
+    }
+    
+    const order = await Order.create(orderData);
+    
+    // Poblar los datos del cliente para la respuesta
+    const populatedOrder = await Order.findById(order._id).populate('client', 'name phone');
+    
     const io = req.app.get('io');
-    io.emit('newOrder', order);
-    res.status(201).json(order);
+    
+    // Emitir evento según el tipo de orden
+    if (mandaditoId && mandaditoId !== 'undefined' && mandaditoId !== 'null') {
+      // Notificar solo al mandadito específico
+      io.to(mandaditoId).emit('directOrder', {
+        order: populatedOrder,
+        message: `Tienes una nueva solicitud de mandado de ${req.user.name}`
+      });
+      console.log(`📢 Notificando al mandadito ${mandaditoId} sobre orden directa`);
+    } else {
+      // Notificar a todos los mandaditos
+      io.emit('newOrder', populatedOrder);
+      console.log('📢 Notificando a todos los mandaditos sobre nueva orden');
+    }
+    
+    res.status(201).json({ 
+      order: populatedOrder,
+      message: mandaditoId ? 'Mandado asignado. Esperando confirmación del mandadito.' : 'Mandado creado. Buscando mandadito disponible.'
+    });
   } catch (error) {
+    console.error('❌ Error en createOrder:', error);
     res.status(500).json({ message: error.message });
   }
 };
 
+// Obtener órdenes del cliente
 const getClientOrders = async (req, res) => {
   try {
     const orders = await Order.find({ client: req.user._id })
@@ -27,6 +70,7 @@ const getClientOrders = async (req, res) => {
       .sort({ createdAt: -1 });
     res.json(orders);
   } catch (error) {
+    console.error('❌ Error en getClientOrders:', error);
     res.status(500).json({ message: error.message });
   }
 };
@@ -38,9 +82,10 @@ const getAvailableMandaditos = async (req, res) => {
       role: 'mandadito', 
       isActive: true,
       isAvailable: true 
-    }).select('name phone profilePhoto rating totalRatings');
+    }).select('name phone profilePhoto rating totalRatings isAvailable');
     res.json(mandaditos);
   } catch (error) {
+    console.error('❌ Error en getAvailableMandaditos:', error);
     res.status(500).json({ message: error.message });
   }
 };
@@ -48,8 +93,7 @@ const getAvailableMandaditos = async (req, res) => {
 // Obtener perfil de un mandadito específico
 const getMandaditoProfile = async (req, res) => {
   try {
-    const mandadito = await User.findById(req.params.id)
-      .select('name phone profilePhoto rating totalRatings motoPhotos');
+    const mandadito = await User.findById(req.params.id).select('-password');
     
     if (!mandadito || mandadito.role !== 'mandadito') {
       return res.status(404).json({ message: 'Mandadito no encontrado' });
@@ -63,10 +107,12 @@ const getMandaditoProfile = async (req, res) => {
     
     res.json({ mandadito, ratings });
   } catch (error) {
+    console.error('❌ Error en getMandaditoProfile:', error);
     res.status(500).json({ message: error.message });
   }
 };
 
+// Cliente confirma que recibió el pedido
 const confirmReceived = async (req, res) => {
   try {
     const order = await Order.findById(req.params.orderId);
@@ -88,10 +134,12 @@ const confirmReceived = async (req, res) => {
 
     res.json({ order, message: '¡Gracias por confirmar! El pedido ha sido completado.' });
   } catch (error) {
+    console.error('❌ Error en confirmReceived:', error);
     res.status(500).json({ message: error.message });
   }
 };
 
+// Calificar mandadito
 const rateMandadito = async (req, res) => {
   try {
     const { orderId, score, comment } = req.body;
@@ -118,7 +166,6 @@ const rateMandadito = async (req, res) => {
       comment: comment || '',
     });
 
-    // Actualizar promedio del mandadito
     const allRatings = await Rating.find({ mandadito: order.mandadito });
     const avg = allRatings.reduce((sum, r) => sum + r.score, 0) / allRatings.length;
     
@@ -132,7 +179,7 @@ const rateMandadito = async (req, res) => {
       message: '¡Calificación guardada! Gracias por tu feedback.' 
     });
   } catch (error) {
-    console.error('Error en rateMandadito:', error);
+    console.error('❌ Error en rateMandadito:', error);
     res.status(500).json({ message: error.message });
   }
 };

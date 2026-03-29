@@ -6,11 +6,14 @@ const {
   toggleAvailability,
   getOrders,
   getPendingOrders,
+  acceptDirectOrder,
+  rejectDirectOrder,
   acceptOrder,
   markAsDelivered,
   requestRecharge,
   getEarningsReport,
 } = require('../controllers/mandaditoController');
+
 const router = express.Router();
 
 router.use(protect);
@@ -20,8 +23,10 @@ router.get('/profile', getProfile);
 router.put('/availability', toggleAvailability);
 router.get('/orders', getOrders);
 router.get('/orders/pending', getPendingOrders);
+router.put('/orders/:orderId/accept-direct', acceptDirectOrder);
+router.put('/orders/:orderId/reject-direct', rejectDirectOrder);
 router.put('/orders/:orderId/accept', acceptOrder);
-router.put('/orders/:orderId/deliver', markAsDelivered); // Cambiado: marcar como entregado
+router.put('/orders/:orderId/deliver', markAsDelivered);
 router.post('/recharge', requestRecharge);
 router.get('/earnings', getEarningsReport);
 

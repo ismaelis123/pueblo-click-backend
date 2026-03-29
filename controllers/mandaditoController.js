@@ -34,8 +34,12 @@ const getOrders = async (req, res) => {
 
 const getPendingOrders = async (req, res) => {
   try {
-    const orders = await Order.find({ status: 'pending' })
-      .populate('client', 'name phone profilePhoto')
+    const orders = await Order.find({ 
+      $or: [
+        { status: 'pending' },
+        { status: 'pending_confirmation', mandadito: req.user._id }
+      ]
+    }).populate('client', 'name phone profilePhoto')
       .sort({ createdAt: -1 });
     res.json(orders);
   } catch (error) {
@@ -43,7 +47,88 @@ const getPendingOrders = async (req, res) => {
   }
 };
 
-// ACEPTAR ORDEN - DESCUENTA CRÉDITO INMEDIATAMENTE
+// ACEPTAR ORDEN DIRECTA (cuando el cliente le asigna directamente)
+const acceptDirectOrder = async (req, res) => {
+  try {
+    const order = await Order.findById(req.params.orderId);
+
+    if (!order) return res.status(404).json({ message: 'Orden no encontrada' });
+    if (order.status !== 'pending_confirmation') {
+      return res.status(400).json({ message: 'Esta orden ya no está esperando tu confirmación' });
+    }
+    if (order.mandadito.toString() !== req.user._id.toString()) {
+      return res.status(403).json({ message: 'No autorizado' });
+    }
+    
+    // Verificar crédito suficiente
+    if (req.user.credit < order.amount) {
+      return res.status(400).json({ 
+        message: `Crédito insuficiente. Necesitas C$${order.amount} para aceptar este mandado.` 
+      });
+    }
+
+    // DESCONTAR CRÉDITO AL ACEPTAR
+    req.user.credit -= order.amount;
+    await req.user.save();
+
+    order.status = 'accepted';
+    await order.save();
+
+    const io = req.app.get('io');
+    io.emit('orderUpdated', order);
+    io.to(order.client.toString()).emit('orderConfirmed', {
+      order,
+      message: `Tu mandado ha sido aceptado por ${req.user.name}`
+    });
+
+    res.json({ 
+      order, 
+      creditRestante: req.user.credit,
+      message: `✅ Orden aceptada. Se descontaron C$${order.amount} de tu crédito.`
+    });
+  } catch (error) {
+    console.error('❌ Error en acceptDirectOrder:', error);
+    res.status(500).json({ message: error.message });
+  }
+};
+
+// RECHAZAR ORDEN DIRECTA
+const rejectDirectOrder = async (req, res) => {
+  try {
+    const order = await Order.findById(req.params.orderId);
+
+    if (!order) return res.status(404).json({ message: 'Orden no encontrada' });
+    if (order.status !== 'pending_confirmation') {
+      return res.status(400).json({ message: 'Esta orden ya no está esperando tu confirmación' });
+    }
+    if (order.mandadito.toString() !== req.user._id.toString()) {
+      return res.status(403).json({ message: 'No autorizado' });
+    }
+
+    const clientName = order.client?.name || 'Cliente';
+    
+    order.mandadito = null;
+    order.status = 'pending';
+    await order.save();
+
+    const io = req.app.get('io');
+    io.emit('orderUpdated', order);
+    io.to(order.client.toString()).emit('orderRejected', {
+      order,
+      message: `${req.user.name} ha rechazado tu mandado. Buscando otro mandadito...`
+    });
+
+    res.json({ 
+      order, 
+      message: `Has rechazado la orden de ${clientName}. Quedará disponible para otros mandaditos.` 
+    });
+  } catch (error) {
+    console.error('❌ Error en rejectDirectOrder:', error);
+    res.status(500).json({ message: error.message });
+  }
+};
+
+// ACEPTAR ORDEN PÚBLICA
 const acceptOrder = async (req, res) => {
   try {
     const order = await Order.findById(req.params.orderId);
@@ -51,12 +136,12 @@ const acceptOrder = async (req, res) => {
     if (!order) return res.status(404).json({ message: 'Orden no encontrada' });
     if (order.status !== 'pending') return res.status(400).json({ message: 'Orden no disponible' });
     
-    // Verificar crédito suficiente ANTES de aceptar
     if (req.user.credit < order.amount) {
-      return res.status(400).json({ message: `Crédito insuficiente. Necesitas C$${order.amount} para aceptar este mandado.` });
+      return res.status(400).json({ 
+        message: `Crédito insuficiente. Necesitas C$${order.amount} para aceptar este mandado.` 
+      });
     }
 
-    // DESCONTAR CRÉDITO AL ACEPTAR
     req.user.credit -= order.amount;
     await req.user.save();
 
@@ -66,13 +151,18 @@ const acceptOrder = async (req, res) => {
 
     const io = req.app.get('io');
     io.emit('orderUpdated', order);
+    io.to(order.client.toString()).emit('orderConfirmed', {
+      order,
+      message: `Tu mandado ha sido aceptado por ${req.user.name}`
+    });
 
     res.json({ 
       order, 
       creditRestante: req.user.credit,
-      message: `Orden aceptada. Se descontaron C$${order.amount} de tu crédito.`
+      message: `✅ Orden aceptada. Se descontaron C$${order.amount} de tu crédito.`
     });
   } catch (error) {
+    console.error('❌ Error en acceptOrder:', error);
     res.status(500).json({ message: error.message });
   }
 };
@@ -96,14 +186,19 @@ const markAsDelivered = async (req, res) => {
 
     const io = req.app.get('io');
     io.emit('orderUpdated', order);
+    io.to(order.client.toString()).emit('orderDelivered', {
+      order,
+      message: `Tu pedido ha sido entregado. Por favor confirma la recepción.`
+    });
 
-    res.json({ order, message: 'Pedido marcado como entregado. Esperando confirmación del cliente.' });
+    res.json({ order, message: '📦 Pedido marcado como entregado. Esperando confirmación del cliente.' });
   } catch (error) {
+    console.error('❌ Error en markAsDelivered:', error);
     res.status(500).json({ message: error.message });
   }
 };
 
-// SOLICITAR RECARGA - CON NÚMERO DE ADMIN
+// SOLICITAR RECARGA
 const requestRecharge = async (req, res) => {
   try {
     const { amount, reference } = req.body;
@@ -123,16 +218,19 @@ const requestRecharge = async (req, res) => {
       deposit,
     });
   } catch (error) {
+    console.error('❌ Error en requestRecharge:', error);
     res.status(500).json({ message: error.message });
   }
 };
 
+// REPORTE DE GANANCIAS
 const getEarningsReport = async (req, res) => {
   try {
     const orders = await Order.find({ mandadito: req.user._id, status: 'completed' });
     const totalEarnings = orders.length * 5;
     res.json({ totalOrders: orders.length, totalEarnings, orders });
   } catch (error) {
+    console.error('❌ Error en getEarningsReport:', error);
     res.status(500).json({ message: error.message });
   }
 };
@@ -142,6 +240,8 @@ module.exports = {
   toggleAvailability,
   getOrders,
   getPendingOrders,
+  acceptDirectOrder,
+  rejectDirectOrder,
   acceptOrder,
   markAsDelivered,
   requestRecharge,
