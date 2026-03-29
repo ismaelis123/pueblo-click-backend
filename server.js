@@ -22,7 +22,7 @@ const server = http.createServer(app);
 
 // Configurar CORS para producción
 const allowedOrigins = [
-  'https://tu-frontend.netlify.app',  // Cambia por tu frontend cuando lo tengas
+  'https://puebloclick.netlify.app/',  // Cambia por tu frontend cuando lo tengas
   'http://localhost:5173',
   'http://localhost:3000'
 ];
