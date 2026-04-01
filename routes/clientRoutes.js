@@ -8,6 +8,7 @@ const {
   getMandaditoProfile,
   confirmReceived,
   rateMandadito,
+  getMandaditoLocation,
 } = require('../controllers/clientController');
 
 const router = express.Router();
@@ -19,6 +20,7 @@ router.post('/orders', createOrder);
 router.get('/orders', getClientOrders);
 router.get('/mandaditos', getAvailableMandaditos);
 router.get('/mandaditos/:id', getMandaditoProfile);
+router.get('/orders/:orderId/location', getMandaditoLocation);
 router.put('/orders/:orderId/confirm', confirmReceived);
 router.post('/rate', rateMandadito);
 

@@ -4,6 +4,8 @@ const roleCheck = require('../middleware/roleCheck');
 const {
   getProfile,
   toggleAvailability,
+  toggleShareLocation,
+  updateLocation,
   getOrders,
   getPendingOrders,
   acceptDirectOrder,
@@ -21,6 +23,8 @@ router.use(roleCheck('mandadito'));
 
 router.get('/profile', getProfile);
 router.put('/availability', toggleAvailability);
+router.put('/share-location/toggle', toggleShareLocation);
+router.post('/location', updateLocation);
 router.get('/orders', getOrders);
 router.get('/orders/pending', getPendingOrders);
 router.put('/orders/:orderId/accept-direct', acceptDirectOrder);

@@ -21,6 +21,69 @@ const toggleAvailability = async (req, res) => {
   }
 };
 
+// NUEVO: Activar/Desactivar compartir ubicación
+const toggleShareLocation = async (req, res) => {
+  try {
+    req.user.isSharingLocation = !req.user.isSharingLocation;
+    await req.user.save();
+    
+    const io = req.app.get('io');
+    io.emit('locationStatusChanged', {
+      mandaditoId: req.user._id,
+      isSharing: req.user.isSharingLocation
+    });
+    
+    res.json({ 
+      isSharingLocation: req.user.isSharingLocation,
+      message: req.user.isSharingLocation ? 'Compartiendo ubicación activado' : 'Compartiendo ubicación desactivado'
+    });
+  } catch (error) {
+    res.status(500).json({ message: error.message });
+  }
+};
+
+// NUEVO: Actualizar ubicación en tiempo real
+const updateLocation = async (req, res) => {
+  try {
+    const { lat, lng, accuracy } = req.body;
+    
+    if (!lat || !lng) {
+      return res.status(400).json({ message: 'Coordenadas requeridas' });
+    }
+    
+    req.user.currentLocation = {
+      lat,
+      lng,
+      accuracy: accuracy || null,
+      lastUpdate: new Date()
+    };
+    await req.user.save();
+    
+    // Emitir a los clientes que tienen órdenes activas con este mandadito
+    const activeOrders = await Order.find({
+      mandadito: req.user._id,
+      status: { $in: ['accepted', 'delivered'] }
+    }).select('client');
+    
+    const io = req.app.get('io');
+    activeOrders.forEach(order => {
+      io.to(order.client.toString()).emit('locationUpdate', {
+        orderId: order._id,
+        location: { lat, lng, accuracy },
+        timestamp: new Date()
+      });
+    });
+    
+    res.json({ 
+      message: 'Ubicación actualizada',
+      location: req.user.currentLocation
+    });
+  } catch (error) {
+    console.error('Error en updateLocation:', error);
+    res.status(500).json({ message: error.message });
+  }
+};
+
 const getOrders = async (req, res) => {
   try {
     const orders = await Order.find({ mandadito: req.user._id })
@@ -47,7 +110,6 @@ const getPendingOrders = async (req, res) => {
   }
 };
 
-// ACEPTAR ORDEN DIRECTA (cuando el cliente le asigna directamente)
 const acceptDirectOrder = async (req, res) => {
   try {
     const order = await Order.findById(req.params.orderId);
@@ -60,14 +122,12 @@ const acceptDirectOrder = async (req, res) => {
       return res.status(403).json({ message: 'No autorizado' });
     }
     
-    // Verificar crédito suficiente
     if (req.user.credit < order.amount) {
       return res.status(400).json({ 
         message: `Crédito insuficiente. Necesitas C$${order.amount} para aceptar este mandado.` 
       });
     }
 
-    // DESCONTAR CRÉDITO AL ACEPTAR
     req.user.credit -= order.amount;
     await req.user.save();
 
@@ -92,7 +152,6 @@ const acceptDirectOrder = async (req, res) => {
   }
 };
 
-// RECHAZAR ORDEN DIRECTA
 const rejectDirectOrder = async (req, res) => {
   try {
     const order = await Order.findById(req.params.orderId);
@@ -128,7 +187,6 @@ const rejectDirectOrder = async (req, res) => {
   }
 };
 
-// ACEPTAR ORDEN PÚBLICA
 const acceptOrder = async (req, res) => {
   try {
     const order = await Order.findById(req.params.orderId);
@@ -167,7 +225,6 @@ const acceptOrder = async (req, res) => {
   }
 };
 
-// MARCAR COMO ENTREGADO
 const markAsDelivered = async (req, res) => {
   try {
     const order = await Order.findById(req.params.orderId);
@@ -198,7 +255,6 @@ const markAsDelivered = async (req, res) => {
   }
 };
 
-// SOLICITAR RECARGA
 const requestRecharge = async (req, res) => {
   try {
     const { amount, reference } = req.body;
@@ -223,7 +279,6 @@ const requestRecharge = async (req, res) => {
   }
 };
 
-// REPORTE DE GANANCIAS
 const getEarningsReport = async (req, res) => {
   try {
     const orders = await Order.find({ mandadito: req.user._id, status: 'completed' });
@@ -238,6 +293,8 @@ const getEarningsReport = async (req, res) => {
 module.exports = {
   getProfile,
   toggleAvailability,
+  toggleShareLocation,
+  updateLocation,
   getOrders,
   getPendingOrders,
   acceptDirectOrder,

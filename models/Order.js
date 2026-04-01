@@ -7,6 +7,17 @@ const orderSchema = new mongoose.Schema(
     description: { type: String, required: true },
     pickupAddress: { type: String, required: true },
     deliveryAddress: { type: String, required: true },
+    
+    // NUEVO: Coordenadas para el mapa
+    pickupLocation: {
+      lat: { type: Number, default: null },
+      lng: { type: Number, default: null }
+    },
+    deliveryLocation: {
+      lat: { type: Number, default: null },
+      lng: { type: Number, default: null }
+    },
+    
     status: {
       type: String,
       enum: ['pending', 'pending_confirmation', 'accepted', 'delivered', 'completed', 'cancelled'],

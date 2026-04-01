@@ -10,14 +10,23 @@ const userSchema = new mongoose.Schema(
     
     // Fotos del mandadito
     profilePhoto: { type: String, default: '' },
-    motoPhotos: { type: [String], default: [] }, // hasta 2 fotos del vehículo
-    cedulaPhoto: { type: String, default: '' },   // foto de cédula
-    seguroPhoto: { type: String, default: '' },   // foto del seguro
-    licenciaPhoto: { type: String, default: '' }, // foto de licencia de conducir
+    motoPhotos: { type: [String], default: [] },
+    cedulaPhoto: { type: String, default: '' },
+    seguroPhoto: { type: String, default: '' },
+    licenciaPhoto: { type: String, default: '' },
     
     // Datos de verificación
-    isVerified: { type: Boolean, default: false }, // si el admin ha verificado sus documentos
+    isVerified: { type: Boolean, default: false },
     verificationMessage: { type: String, default: '' },
+    
+    // NUEVO: Ubicación en tiempo real para seguimiento
+    currentLocation: {
+      lat: { type: Number, default: null },
+      lng: { type: Number, default: null },
+      accuracy: { type: Number, default: null },
+      lastUpdate: { type: Date, default: null }
+    },
+    isSharingLocation: { type: Boolean, default: false },
     
     credit: { type: Number, default: 0 },
     isAvailable: { type: Boolean, default: true },
