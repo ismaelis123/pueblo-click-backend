@@ -9,6 +9,9 @@ router.post(
   upload.fields([
     { name: 'profilePhoto', maxCount: 1 },
     { name: 'motoPhotos', maxCount: 2 },
+    { name: 'cedulaPhoto', maxCount: 1 },
+    { name: 'seguroPhoto', maxCount: 1 },
+    { name: 'licenciaPhoto', maxCount: 1 },
   ]),
   registerMandadito
 );

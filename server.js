@@ -9,20 +9,17 @@ const authRoutes = require('./routes/authRoutes');
 const clientRoutes = require('./routes/clientRoutes');
 const mandaditoRoutes = require('./routes/mandaditoRoutes');
 const adminRoutes = require('./routes/adminRoutes');
+const messageRoutes = require('./routes/messageRoutes');
 const socketHandler = require('./sockets/socketHandler');
 
-// Cargar variables de entorno
 dotenv.config();
-
-// Conectar a MongoDB
 connectDB();
 
 const app = express();
 const server = http.createServer(app);
 
-// ==================== CORS CONFIGURACIÓN CORREGIDA ====================
 const allowedOrigins = [
-  'https://puebloclick.netlify.app',     // ← Sin barra final
+  'https://puebloclick.netlify.app',
   'https://www.puebloclick.netlify.app',
   'http://localhost:5173',
   'http://localhost:3000',
@@ -31,9 +28,7 @@ const allowedOrigins = [
 
 const corsOptions = {
   origin: function (origin, callback) {
-    // Permitir peticiones sin origen (Postman, apps móviles, etc.)
     if (!origin) return callback(null, true);
-
     if (allowedOrigins.includes(origin)) {
       callback(null, true);
     } else {
@@ -43,16 +38,13 @@ const corsOptions = {
   },
   methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
   allowedHeaders: ['Content-Type', 'Authorization'],
-  credentials: true   // Importante para enviar cookies / tokens
+  credentials: true
 };
 
 app.use(cors(corsOptions));
-// =====================================================================
-
 app.use(express.json({ limit: '50mb' }));
 app.use(express.urlencoded({ extended: true, limit: '50mb' }));
 
-// Socket.io con la misma configuración de CORS
 const io = socketIo(server, {
   cors: corsOptions,
   transports: ['websocket', 'polling']
@@ -65,21 +57,19 @@ app.use('/api/auth', authRoutes);
 app.use('/api/client', clientRoutes);
 app.use('/api/mandadito', mandaditoRoutes);
 app.use('/api/admin', adminRoutes);
+app.use('/api/messages', messageRoutes);
 
-// Ruta de prueba
 app.get('/', (req, res) => {
   res.json({ 
     message: 'API Pueblo Click funcionando correctamente',
-    version: '1.0.0',
+    version: '1.2.0',
     status: 'online'
   });
 });
 
-// Manejo de errores
 app.use(notFound);
 app.use(errorHandler);
 
-// Socket handler
 socketHandler(io);
 
 const PORT = process.env.PORT || 5000;

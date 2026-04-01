@@ -46,14 +46,14 @@ const getAdminReport = async (req, res) => {
     const totalMandaditos = await User.countDocuments({ role: 'mandadito', isActive: true });
     const totalClients = await User.countDocuments({ role: 'client', isActive: true });
     const blockedUsers = await User.countDocuments({ isActive: false });
+    const pendingVerification = await User.countDocuments({ role: 'mandadito', isVerified: false, isActive: true });
 
-    res.json({ totalOrders, totalEarnings, totalDeposits, totalMandaditos, totalClients, blockedUsers });
+    res.json({ totalOrders, totalEarnings, totalDeposits, totalMandaditos, totalClients, blockedUsers, pendingVerification });
   } catch (error) {
     res.status(500).json({ message: error.message });
   }
 };
 
-// NUEVO: Obtener todos los usuarios (para admin)
 const getAllUsers = async (req, res) => {
   try {
     const users = await User.find().select('-password').sort({ createdAt: -1 });
@@ -63,7 +63,6 @@ const getAllUsers = async (req, res) => {
   }
 };
 
-// NUEVO: Bloquear usuario
 const blockUser = async (req, res) => {
   try {
     const user = await User.findById(req.params.userId);
@@ -78,7 +77,6 @@ const blockUser = async (req, res) => {
   }
 };
 
-// NUEVO: Desbloquear usuario
 const unblockUser = async (req, res) => {
   try {
     const user = await User.findById(req.params.userId);
@@ -93,13 +91,11 @@ const unblockUser = async (req, res) => {
   }
 };
 
-// NUEVO: Eliminar usuario (solo si no tiene órdenes activas)
 const deleteUser = async (req, res) => {
   try {
     const user = await User.findById(req.params.userId);
     if (!user) return res.status(404).json({ message: 'Usuario no encontrado' });
     
-    // Verificar si tiene órdenes pendientes
     const activeOrders = await Order.findOne({
       $or: [
         { client: user._id, status: { $in: ['pending', 'accepted', 'delivered'] } },
@@ -118,7 +114,6 @@ const deleteUser = async (req, res) => {
   }
 };
 
-// NUEVO: Agregar crédito manualmente
 const addCredit = async (req, res) => {
   try {
     const { amount } = req.body;
@@ -134,6 +129,50 @@ const addCredit = async (req, res) => {
   }
 };
 
+// NUEVO: Verificar mandadito (aprobar documentos)
+const verifyMandadito = async (req, res) => {
+  try {
+    const { userId, approved, message } = req.body;
+    const mandadito = await User.findById(userId);
+    
+    if (!mandadito || mandadito.role !== 'mandadito') {
+      return res.status(404).json({ message: 'Mandadito no encontrado' });
+    }
+    
+    mandadito.isVerified = approved;
+    mandadito.verificationMessage = message || (approved ? 'Documentos verificados. Ya puedes aceptar mandados.' : 'Tus documentos no fueron aprobados. Contacta al administrador.');
+    await mandadito.save();
+    
+    const io = req.app.get('io');
+    io.to(userId).emit('verificationStatus', {
+      isVerified: approved,
+      message: mandadito.verificationMessage
+    });
+    
+    res.json({ 
+      message: approved ? `Mandadito ${mandadito.name} verificado exitosamente` : `Mandadito ${mandadito.name} no verificado`,
+      mandadito 
+    });
+  } catch (error) {
+    console.error('Error en verifyMandadito:', error);
+    res.status(500).json({ message: error.message });
+  }
+};
+
+// NUEVO: Obtener mandaditos pendientes de verificación
+const getPendingVerification = async (req, res) => {
+  try {
+    const mandaditos = await User.find({ 
+      role: 'mandadito', 
+      isVerified: false,
+      isActive: true 
+    }).select('-password');
+    res.json(mandaditos);
+  } catch (error) {
+    res.status(500).json({ message: error.message });
+  }
+};
+
 module.exports = {
   confirmDeposit,
   getPendingDeposits,
@@ -143,4 +182,6 @@ module.exports = {
   unblockUser,
   deleteUser,
   addCredit,
+  verifyMandadito,
+  getPendingVerification,
 };
