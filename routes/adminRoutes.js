@@ -11,8 +11,9 @@ const {
   deleteUser,
   addCredit,
   verifyMandadito,
-  getPendingVerification,
+  getPendingVerification
 } = require('../controllers/adminController');
+
 const router = express.Router();
 
 router.use(protect);

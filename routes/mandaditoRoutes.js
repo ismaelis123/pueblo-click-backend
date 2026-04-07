@@ -4,8 +4,7 @@ const roleCheck = require('../middleware/roleCheck');
 const {
   getProfile,
   toggleAvailability,
-  toggleShareLocation,
-  updateLocation,
+  updateWorkSchedule,
   getOrders,
   getPendingOrders,
   acceptDirectOrder,
@@ -14,6 +13,8 @@ const {
   markAsDelivered,
   requestRecharge,
   getEarningsReport,
+  toggleShareLocation,
+  updateLocation
 } = require('../controllers/mandaditoController');
 
 const router = express.Router();
@@ -23,8 +24,7 @@ router.use(roleCheck('mandadito'));
 
 router.get('/profile', getProfile);
 router.put('/availability', toggleAvailability);
-router.put('/share-location/toggle', toggleShareLocation);
-router.post('/location', updateLocation);
+router.put('/schedule', updateWorkSchedule);
 router.get('/orders', getOrders);
 router.get('/orders/pending', getPendingOrders);
 router.put('/orders/:orderId/accept-direct', acceptDirectOrder);
@@ -33,5 +33,7 @@ router.put('/orders/:orderId/accept', acceptOrder);
 router.put('/orders/:orderId/deliver', markAsDelivered);
 router.post('/recharge', requestRecharge);
 router.get('/earnings', getEarningsReport);
+router.put('/share-location/toggle', toggleShareLocation);
+router.post('/location', updateLocation);
 
 module.exports = router;

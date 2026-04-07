@@ -1,32 +1,24 @@
 const Order = require('../models/Order');
 const Rating = require('../models/Rating');
 const User = require('../models/User');
-const axios = require('axios'); // Para geocodificación
+const axios = require('axios');
+const { notifyNewOrderToMandaditos, notifyClientConfirmed } = require('./notificationController');
 
-// Función auxiliar para geocodificar dirección (convertir a coordenadas)
 const geocodeAddress = async (address) => {
   try {
-    // Usando Nominatim de OpenStreetMap (gratuito)
     const response = await axios.get('https://nominatim.openstreetmap.org/search', {
       params: {
         q: `${address}, Juigalpa, Chontales, Nicaragua`,
         format: 'json',
         limit: 1
       },
-      headers: {
-        'User-Agent': 'PuebloClick/1.0'
-      }
+      headers: { 'User-Agent': 'PuebloClick/1.0' }
     });
-    
     if (response.data && response.data.length > 0) {
-      return {
-        lat: parseFloat(response.data[0].lat),
-        lng: parseFloat(response.data[0].lon)
-      };
+      return { lat: parseFloat(response.data[0].lat), lng: parseFloat(response.data[0].lon) };
     }
     return null;
   } catch (error) {
-    console.error('Error en geocodificación:', error.message);
     return null;
   }
 };
@@ -35,9 +27,6 @@ const createOrder = async (req, res) => {
   try {
     const { description, pickupAddress, deliveryAddress, mandaditoId } = req.body;
     
-    console.log('📝 Creando orden con datos:', { description, pickupAddress, deliveryAddress, mandaditoId });
-    
-    // Geocodificar direcciones a coordenadas
     const pickupLocation = await geocodeAddress(pickupAddress);
     const deliveryLocation = await geocodeAddress(deliveryAddress);
     
@@ -56,11 +45,9 @@ const createOrder = async (req, res) => {
       if (!mandadito || mandadito.role !== 'mandadito') {
         return res.status(404).json({ message: 'Mandadito no encontrado' });
       }
-      
       if (!mandadito.isVerified) {
-        return res.status(400).json({ message: 'Este mandadito aún no ha sido verificado por el administrador' });
+        return res.status(400).json({ message: 'Este mandadito aún no ha sido verificado' });
       }
-      
       orderData.mandadito = mandaditoId;
       orderData.status = 'pending_confirmation';
     } else {
@@ -69,7 +56,6 @@ const createOrder = async (req, res) => {
     
     const order = await Order.create(orderData);
     const populatedOrder = await Order.findById(order._id).populate('client', 'name phone');
-    
     const io = req.app.get('io');
     
     if (mandaditoId && mandaditoId !== 'undefined' && mandaditoId !== 'null') {
@@ -77,18 +63,17 @@ const createOrder = async (req, res) => {
         order: populatedOrder,
         message: `Tienes una nueva solicitud de mandado de ${req.user.name}`
       });
-      console.log(`📢 Notificando al mandadito ${mandaditoId} sobre orden directa`);
     } else {
       io.emit('newOrder', populatedOrder);
-      console.log('📢 Notificando a todos los mandaditos sobre nueva orden');
+      await notifyNewOrderToMandaditos(order, req.user.name);
     }
     
     res.status(201).json({ 
       order: populatedOrder,
-      message: mandaditoId ? 'Mandado asignado. Esperando confirmación del mandadito.' : 'Mandado creado. Buscando mandadito disponible.'
+      message: mandaditoId ? 'Mandado asignado. Esperando confirmación.' : 'Mandado creado. Buscando mandadito.'
     });
   } catch (error) {
-    console.error('❌ Error en createOrder:', error);
+    console.error('❌ Error:', error);
     res.status(500).json({ message: error.message });
   }
 };
@@ -96,11 +81,10 @@ const createOrder = async (req, res) => {
 const getClientOrders = async (req, res) => {
   try {
     const orders = await Order.find({ client: req.user._id })
-      .populate('mandadito', 'name phone profilePhoto rating totalRatings currentLocation isSharingLocation')
+      .populate('mandadito', 'name phone profilePhoto rating totalRatings')
       .sort({ createdAt: -1 });
     res.json(orders);
   } catch (error) {
-    console.error('❌ Error en getClientOrders:', error);
     res.status(500).json({ message: error.message });
   }
 };
@@ -111,11 +95,10 @@ const getAvailableMandaditos = async (req, res) => {
       role: 'mandadito', 
       isActive: true,
       isAvailable: true,
-      isVerified: true
-    }).select('name phone profilePhoto rating totalRatings isAvailable motoPhotos currentLocation');
+      isVerified: true 
+    }).select('name phone profilePhoto rating totalRatings isAvailable motoPhotos');
     res.json(mandaditos);
   } catch (error) {
-    console.error('❌ Error en getAvailableMandaditos:', error);
     res.status(500).json({ message: error.message });
   }
 };
@@ -123,16 +106,13 @@ const getAvailableMandaditos = async (req, res) => {
 const getMandaditoProfile = async (req, res) => {
   try {
     const mandadito = await User.findById(req.params.id).select('-password');
-    
     if (!mandadito || mandadito.role !== 'mandadito') {
       return res.status(404).json({ message: 'Mandadito no encontrado' });
     }
-    
     const ratings = await Rating.find({ mandadito: mandadito._id })
       .populate('client', 'name')
       .sort({ createdAt: -1 })
       .limit(10);
-    
     res.json({ 
       mandadito: {
         _id: mandadito._id,
@@ -147,14 +127,13 @@ const getMandaditoProfile = async (req, res) => {
         totalRatings: mandadito.totalRatings,
         isAvailable: mandadito.isAvailable,
         isVerified: mandadito.isVerified,
+        workSchedule: mandadito.workSchedule,
         currentLocation: mandadito.currentLocation,
-        isSharingLocation: mandadito.isSharingLocation,
         createdAt: mandadito.createdAt
       }, 
       ratings 
     });
   } catch (error) {
-    console.error('❌ Error en getMandaditoProfile:', error);
     res.status(500).json({ message: error.message });
   }
 };
@@ -162,7 +141,6 @@ const getMandaditoProfile = async (req, res) => {
 const confirmReceived = async (req, res) => {
   try {
     const order = await Order.findById(req.params.orderId);
-
     if (!order) return res.status(404).json({ message: 'Orden no encontrada' });
     if (order.client.toString() !== req.user._id.toString()) {
       return res.status(403).json({ message: 'No autorizado' });
@@ -177,10 +155,10 @@ const confirmReceived = async (req, res) => {
 
     const io = req.app.get('io');
     io.emit('orderUpdated', order);
+    await notifyClientConfirmed(order, req.user.name);
 
     res.json({ order, message: '¡Gracias por confirmar! El pedido ha sido completado.' });
   } catch (error) {
-    console.error('❌ Error en confirmReceived:', error);
     res.status(500).json({ message: error.message });
   }
 };
@@ -213,7 +191,6 @@ const rateMandadito = async (req, res) => {
 
     const allRatings = await Rating.find({ mandadito: order.mandadito });
     const avg = allRatings.reduce((sum, r) => sum + r.score, 0) / allRatings.length;
-    
     await User.findByIdAndUpdate(order.mandadito, { 
       rating: avg, 
       totalRatings: allRatings.length 
@@ -224,36 +201,26 @@ const rateMandadito = async (req, res) => {
       message: '¡Calificación guardada! Gracias por tu feedback.' 
     });
   } catch (error) {
-    console.error('❌ Error en rateMandadito:', error);
     res.status(500).json({ message: error.message });
   }
 };
 
-// NUEVO: Obtener ubicación actual del mandadito para una orden
 const getMandaditoLocation = async (req, res) => {
   try {
-    const { orderId } = req.params;
-    const order = await Order.findById(orderId).populate('mandadito', 'currentLocation isSharingLocation');
-    
-    if (!order) {
-      return res.status(404).json({ message: 'Orden no encontrada' });
-    }
-    
+    const order = await Order.findById(req.params.orderId).populate('mandadito', 'currentLocation isSharingLocation');
+    if (!order) return res.status(404).json({ message: 'Orden no encontrada' });
     if (order.client.toString() !== req.user._id.toString()) {
       return res.status(403).json({ message: 'No autorizado' });
     }
-    
     if (!order.mandadito || !order.mandadito.isSharingLocation) {
       return res.status(400).json({ message: 'El mandadito no está compartiendo su ubicación' });
     }
-    
     res.json({
       location: order.mandadito.currentLocation,
       isSharing: order.mandadito.isSharingLocation,
       lastUpdate: order.mandadito.currentLocation?.lastUpdate
     });
   } catch (error) {
-    console.error('Error en getMandaditoLocation:', error);
     res.status(500).json({ message: error.message });
   }
 };
@@ -265,5 +232,5 @@ module.exports = {
   getMandaditoProfile,
   confirmReceived,
   rateMandadito,
-  getMandaditoLocation,
+  getMandaditoLocation
 };
