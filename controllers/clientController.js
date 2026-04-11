@@ -7,11 +7,7 @@ const { notifyNewOrderToMandaditos, notifyClientConfirmed } = require('./notific
 const geocodeAddress = async (address) => {
   try {
     const response = await axios.get('https://nominatim.openstreetmap.org/search', {
-      params: {
-        q: `${address}, Juigalpa, Chontales, Nicaragua`,
-        format: 'json',
-        limit: 1
-      },
+      params: { q: `${address}, Juigalpa, Chontales, Nicaragua`, format: 'json', limit: 1 },
       headers: { 'User-Agent': 'PuebloClick/1.0' }
     });
     if (response.data && response.data.length > 0) {
@@ -94,11 +90,13 @@ const getAvailableMandaditos = async (req, res) => {
     const mandaditos = await User.find({ 
       role: 'mandadito', 
       isActive: true,
-      isAvailable: true,
-      isVerified: true 
-    }).select('name phone profilePhoto rating totalRatings isAvailable motoPhotos');
+      isVerified: true
+    }).select('name phone profilePhoto rating totalRatings isAvailable motoPhotos workSchedule currentLocation');
+    
+    console.log(`📋 Mandaditos encontrados: ${mandaditos.length}`);
     res.json(mandaditos);
   } catch (error) {
+    console.error('❌ Error en getAvailableMandaditos:', error);
     res.status(500).json({ message: error.message });
   }
 };

@@ -205,6 +205,15 @@ const markAsDelivered = async (req, res) => {
       message: `Tu pedido ha sido entregado. Por favor confirma.`
     });
     
+    if (req.user.currentLocation) {
+      io.to(order.client.toString()).emit('locationUpdate', {
+        orderId: order._id,
+        location: req.user.currentLocation,
+        final: true,
+        timestamp: new Date()
+      });
+    }
+    
     await notifyOrderDelivered(order, req.user.name);
 
     res.json({ order, message: '📦 Pedido marcado como entregado. Esperando confirmación.' });
@@ -275,19 +284,23 @@ const updateLocation = async (req, res) => {
     const activeOrders = await Order.find({ 
       mandadito: req.user._id, 
       status: { $in: ['accepted', 'delivered'] } 
-    }).select('client');
+    }).populate('client', '_id');
+    
+    console.log(`📍 Ubicación actualizada para ${req.user.name}: ${lat}, ${lng}`);
+    console.log(`📢 Notificando a ${activeOrders.length} clientes`);
     
     const io = req.app.get('io');
     activeOrders.forEach(order => {
-      io.to(order.client.toString()).emit('locationUpdate', { 
+      io.to(order.client._id.toString()).emit('locationUpdate', { 
         orderId: order._id, 
-        location: { lat, lng, accuracy }, 
-        timestamp: new Date() 
+        location: { lat, lng, accuracy },
+        timestamp: new Date()
       });
     });
     
     res.json({ message: 'Ubicación actualizada', location: req.user.currentLocation });
   } catch (error) {
+    console.error('❌ Error en updateLocation:', error);
     res.status(500).json({ message: error.message });
   }
 };
