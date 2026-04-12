@@ -24,7 +24,6 @@ if (publicKey && privateKey && publicKey !== 'undefined' && privateKey !== 'unde
   }
 } else {
   console.log('⚠️ VAPID keys no configuradas. Las notificaciones push no funcionarán.');
-  console.log('Para activarlas, agrega VAPID_PUBLIC_KEY y VAPID_PRIVATE_KEY en el archivo .env');
 }
 
 const saveSubscription = async (req, res) => {
@@ -69,7 +68,6 @@ const deleteSubscription = async (req, res) => {
 };
 
 const sendPushNotification = async (userId, title, body, url = '/') => {
-  // Verificar que web-push está configurado
   if (!publicKey || !privateKey || publicKey === 'undefined' || privateKey === 'undefined') {
     console.log('⚠️ Notificación no enviada: VAPID keys no configuradas');
     return;
@@ -125,6 +123,8 @@ const notifyNewOrderToMandaditos = async (order, clientName) => {
   }
 };
 
+// ==================== FUNCIONES FALTANTES (AGREGADAS) ====================
+
 const notifyOrderAccepted = async (order, mandaditoName) => {
   await sendPushNotification(
     order.client,
@@ -138,7 +138,7 @@ const notifyOrderDelivered = async (order, mandaditoName) => {
   await sendPushNotification(
     order.client,
     '📦 Mandado entregado',
-    `${mandaditoName} entregó tu mandado. Por favor confirma la recepción.`,
+    `${mandaditoName} ha marcado tu mandado como entregado. Por favor confirma la recepción.`,
     `/client/orders`
   );
 };
@@ -146,7 +146,7 @@ const notifyOrderDelivered = async (order, mandaditoName) => {
 const notifyClientConfirmed = async (order, clientName) => {
   await sendPushNotification(
     order.mandadito,
-    '✅ Cliente confirmó',
+    '✅ Cliente confirmó la entrega',
     `${clientName} confirmó que recibió el mandado. ¡Gracias por tu servicio!`,
     `/mandadito/orders`
   );
