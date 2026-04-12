@@ -271,7 +271,11 @@ const toggleShareLocation = async (req, res) => {
 const updateLocation = async (req, res) => {
   try {
     const { lat, lng, accuracy } = req.body;
-    if (!lat || !lng) return res.status(400).json({ message: 'Coordenadas requeridas' });
+    if (!lat || !lng) {
+      return res.status(400).json({ message: 'Coordenadas requeridas' });
+    }
+    
+    console.log(`📍 Actualizando ubicación de ${req.user.name}: ${lat}, ${lng}`);
     
     req.user.currentLocation = { 
       lat, 
@@ -281,22 +285,23 @@ const updateLocation = async (req, res) => {
     };
     await req.user.save();
     
+    // Buscar órdenes activas de este mandadito
     const activeOrders = await Order.find({ 
       mandadito: req.user._id, 
       status: { $in: ['accepted', 'delivered'] } 
     }).populate('client', '_id');
     
-    console.log(`📍 Ubicación actualizada para ${req.user.name}: ${lat}, ${lng}`);
     console.log(`📢 Notificando a ${activeOrders.length} clientes`);
     
     const io = req.app.get('io');
-    activeOrders.forEach(order => {
+    for (const order of activeOrders) {
       io.to(order.client._id.toString()).emit('locationUpdate', { 
         orderId: order._id, 
         location: { lat, lng, accuracy },
         timestamp: new Date()
       });
-    });
+      console.log(`✅ Ubicación enviada al cliente ${order.client._id} para orden ${order._id}`);
+    }
     
     res.json({ message: 'Ubicación actualizada', location: req.user.currentLocation });
   } catch (error) {
