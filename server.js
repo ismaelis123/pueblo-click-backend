@@ -35,8 +35,8 @@ const server = http.createServer(app);
 
 // ==================== 5. CONFIGURACIÓN CORS ====================
 const allowedOrigins = [
-  'https://puebloclick.netlify.app',
-  'https://www.puebloclick.netlify.app',
+  'https://pueblo-click.netlify.app',
+  'https://www.pueblo-click.netlify.app',
   'http://localhost:5173',
   'http://localhost:3000',
   'http://127.0.0.1:5173',
