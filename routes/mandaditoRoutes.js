@@ -6,6 +6,7 @@ const {
   toggleAvailability,
   updateWorkSchedule,
   getOrders,
+  getOrderDetails, // NUEVO
   getPendingOrders,
   acceptDirectOrder,
   rejectDirectOrder,
@@ -26,6 +27,7 @@ router.get('/profile', getProfile);
 router.put('/availability', toggleAvailability);
 router.put('/schedule', updateWorkSchedule);
 router.get('/orders', getOrders);
+router.get('/orders/:orderId', getOrderDetails); // NUEVA RUTA
 router.get('/orders/pending', getPendingOrders);
 router.put('/orders/:orderId/accept-direct', acceptDirectOrder);
 router.put('/orders/:orderId/reject-direct', rejectDirectOrder);

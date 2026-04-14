@@ -1,7 +1,46 @@
 const Order = require('../models/Order');
 const User = require('../models/User');
 const Deposit = require('../models/Deposit');
+const axios = require('axios');
 const { notifyOrderAccepted, notifyOrderDelivered } = require('./notificationController');
+
+// Geocodificar dirección con fallback
+const geocodeAddress = async (address) => {
+  try {
+    const response = await axios.get('https://nominatim.openstreetmap.org/search', {
+      params: { 
+        q: `${address}, Juigalpa, Chontales, Nicaragua`, 
+        format: 'json', 
+        limit: 1 
+      },
+      headers: { 'User-Agent': 'PuebloClick/1.0' }
+    });
+    
+    if (response.data && response.data.length > 0) {
+      return { 
+        lat: parseFloat(response.data[0].lat), 
+        lng: parseFloat(response.data[0].lon),
+        displayName: response.data[0].display_name
+      };
+    }
+    
+    // Fallback: Si no encuentra, usar coordenadas aproximadas de Juigalpa
+    console.log('⚠️ Dirección no encontrada, usando fallback de Juigalpa');
+    return { 
+      lat: 12.106, 
+      lng: -85.364, 
+      displayName: 'Juigalpa, Chontales (ubicación aproximada)'
+    };
+  } catch (error) {
+    console.error('Error geocodificando:', error.message);
+    // Fallback en caso de error
+    return { 
+      lat: 12.106, 
+      lng: -85.364, 
+      displayName: 'Juigalpa, Chontales (ubicación aproximada)'
+    };
+  }
+};
 
 const getProfile = async (req, res) => {
   try {
@@ -63,6 +102,45 @@ const getOrders = async (req, res) => {
   }
 };
 
+// NUEVO: Obtener detalles de una orden específica con coordenadas actualizadas
+const getOrderDetails = async (req, res) => {
+  try {
+    const order = await Order.findById(req.params.orderId)
+      .populate('client', 'name phone profilePhoto')
+      .populate('mandadito', 'name phone profilePhoto currentLocation');
+    
+    if (!order) {
+      return res.status(404).json({ message: 'Orden no encontrada' });
+    }
+    
+    // Verificar que el mandadito sea el asignado
+    if (order.mandadito?._id.toString() !== req.user._id.toString()) {
+      return res.status(403).json({ message: 'No autorizado' });
+    }
+    
+    // Si no hay coordenadas de pickup o delivery, geocodificarlas
+    if (!order.pickupLocation?.lat || !order.deliveryLocation?.lat) {
+      console.log('📍 Geocodificando direcciones para orden:', order._id);
+      
+      if (!order.pickupLocation?.lat) {
+        const pickupCoords = await geocodeAddress(order.pickupAddress);
+        order.pickupLocation = pickupCoords;
+      }
+      
+      if (!order.deliveryLocation?.lat) {
+        const deliveryCoords = await geocodeAddress(order.deliveryAddress);
+        order.deliveryLocation = deliveryCoords;
+      }
+      
+      await order.save();
+    }
+    
+    res.json(order);
+  } catch (error) {
+    res.status(500).json({ message: error.message });
+  }
+};
+
 const getPendingOrders = async (req, res) => {
   try {
     const orders = await Order.find({ 
@@ -95,6 +173,17 @@ const acceptDirectOrder = async (req, res) => {
     req.user.credit -= order.amount;
     await req.user.save();
     order.status = 'accepted';
+    
+    // Asegurar que las coordenadas existan
+    if (!order.pickupLocation?.lat) {
+      const pickupCoords = await geocodeAddress(order.pickupAddress);
+      order.pickupLocation = pickupCoords;
+    }
+    if (!order.deliveryLocation?.lat) {
+      const deliveryCoords = await geocodeAddress(order.deliveryAddress);
+      order.deliveryLocation = deliveryCoords;
+    }
+    
     await order.save();
 
     const io = req.app.get('io');
@@ -162,6 +251,17 @@ const acceptOrder = async (req, res) => {
     await req.user.save();
     order.mandadito = req.user._id;
     order.status = 'accepted';
+    
+    // Asegurar que las coordenadas existan
+    if (!order.pickupLocation?.lat) {
+      const pickupCoords = await geocodeAddress(order.pickupAddress);
+      order.pickupLocation = pickupCoords;
+    }
+    if (!order.deliveryLocation?.lat) {
+      const deliveryCoords = await geocodeAddress(order.deliveryAddress);
+      order.deliveryLocation = deliveryCoords;
+    }
+    
     await order.save();
 
     const io = req.app.get('io');
@@ -285,7 +385,6 @@ const updateLocation = async (req, res) => {
     };
     await req.user.save();
     
-    // Buscar órdenes activas de este mandadito
     const activeOrders = await Order.find({ 
       mandadito: req.user._id, 
       status: { $in: ['accepted', 'delivered'] } 
@@ -315,6 +414,7 @@ module.exports = {
   toggleAvailability,
   updateWorkSchedule,
   getOrders,
+  getOrderDetails, // NUEVO
   getPendingOrders,
   acceptDirectOrder,
   rejectDirectOrder,
