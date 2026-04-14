@@ -24,7 +24,6 @@ const geocodeAddress = async (address) => {
       };
     }
     
-    // Fallback: Si no encuentra, usar coordenadas aproximadas de Juigalpa
     console.log('⚠️ Dirección no encontrada, usando fallback de Juigalpa');
     return { 
       lat: 12.106, 
@@ -33,7 +32,6 @@ const geocodeAddress = async (address) => {
     };
   } catch (error) {
     console.error('Error geocodificando:', error.message);
-    // Fallback en caso de error
     return { 
       lat: 12.106, 
       lng: -85.364, 
@@ -47,6 +45,7 @@ const getProfile = async (req, res) => {
     const mandadito = await User.findById(req.user._id).select('-password');
     res.json(mandadito);
   } catch (error) {
+    console.error('Error en getProfile:', error);
     res.status(500).json({ message: error.message });
   }
 };
@@ -57,6 +56,7 @@ const toggleAvailability = async (req, res) => {
     await req.user.save();
     res.json({ isAvailable: req.user.isAvailable });
   } catch (error) {
+    console.error('Error en toggleAvailability:', error);
     res.status(500).json({ message: error.message });
   }
 };
@@ -70,12 +70,15 @@ const updateWorkSchedule = async (req, res) => {
     }
     
     req.user.workSchedule = {
-      enabled: enabled !== undefined ? enabled : req.user.workSchedule.enabled,
-      startTime: startTime || req.user.workSchedule.startTime,
-      endTime: endTime || req.user.workSchedule.endTime,
-      lunchStart: lunchStart || req.user.workSchedule.lunchStart,
-      lunchEnd: lunchEnd || req.user.workSchedule.lunchEnd,
-      workDays: workDays || req.user.workSchedule.workDays
+      enabled: enabled !== undefined ? enabled : req.user.workSchedule?.enabled || true,
+      startTime: startTime || req.user.workSchedule?.startTime || '08:00',
+      endTime: endTime || req.user.workSchedule?.endTime || '17:00',
+      lunchStart: lunchStart || req.user.workSchedule?.lunchStart || '12:00',
+      lunchEnd: lunchEnd || req.user.workSchedule?.lunchEnd || '13:00',
+      workDays: workDays || req.user.workSchedule?.workDays || {
+        monday: true, tuesday: true, wednesday: true, thursday: true, 
+        friday: true, saturday: false, sunday: false
+      }
     };
     
     await req.user.save();
@@ -87,6 +90,7 @@ const updateWorkSchedule = async (req, res) => {
       isAvailable: req.user.isAvailable 
     });
   } catch (error) {
+    console.error('Error en updateWorkSchedule:', error);
     res.status(500).json({ message: error.message });
   }
 };
@@ -98,11 +102,11 @@ const getOrders = async (req, res) => {
       .sort({ createdAt: -1 });
     res.json(orders);
   } catch (error) {
+    console.error('Error en getOrders:', error);
     res.status(500).json({ message: error.message });
   }
 };
 
-// NUEVO: Obtener detalles de una orden específica con coordenadas actualizadas
 const getOrderDetails = async (req, res) => {
   try {
     const order = await Order.findById(req.params.orderId)
@@ -114,44 +118,55 @@ const getOrderDetails = async (req, res) => {
     }
     
     // Verificar que el mandadito sea el asignado
-    if (order.mandadito?._id.toString() !== req.user._id.toString()) {
+    if (!order.mandadito || order.mandadito._id.toString() !== req.user._id.toString()) {
       return res.status(403).json({ message: 'No autorizado' });
     }
     
-    // Si no hay coordenadas de pickup o delivery, geocodificarlas
-    if (!order.pickupLocation?.lat || !order.deliveryLocation?.lat) {
-      console.log('📍 Geocodificando direcciones para orden:', order._id);
-      
-      if (!order.pickupLocation?.lat) {
+    // Si no hay coordenadas, geocodificarlas
+    if (!order.pickupLocation?.lat) {
+      try {
         const pickupCoords = await geocodeAddress(order.pickupAddress);
         order.pickupLocation = pickupCoords;
+      } catch (e) {
+        order.pickupLocation = { lat: 12.106, lng: -85.364 };
       }
-      
-      if (!order.deliveryLocation?.lat) {
+    }
+    
+    if (!order.deliveryLocation?.lat) {
+      try {
         const deliveryCoords = await geocodeAddress(order.deliveryAddress);
         order.deliveryLocation = deliveryCoords;
+      } catch (e) {
+        order.deliveryLocation = { lat: 12.106, lng: -85.364 };
       }
-      
-      await order.save();
     }
+    
+    await order.save();
     
     res.json(order);
   } catch (error) {
+    console.error('Error en getOrderDetails:', error);
     res.status(500).json({ message: error.message });
   }
 };
 
 const getPendingOrders = async (req, res) => {
   try {
+    console.log('🔍 Buscando órdenes pendientes para mandadito:', req.user._id);
+    
     const orders = await Order.find({ 
       $or: [
         { status: 'pending' },
         { status: 'pending_confirmation', mandadito: req.user._id }
       ]
-    }).populate('client', 'name phone profilePhoto')
-      .sort({ createdAt: -1 });
+    })
+    .populate('client', 'name phone profilePhoto')
+    .sort({ createdAt: -1 });
+    
+    console.log(`📋 Encontradas ${orders.length} órdenes pendientes`);
     res.json(orders);
   } catch (error) {
+    console.error('❌ Error en getPendingOrders:', error);
     res.status(500).json({ message: error.message });
   }
 };
@@ -163,7 +178,7 @@ const acceptDirectOrder = async (req, res) => {
     if (order.status !== 'pending_confirmation') {
       return res.status(400).json({ message: 'Esta orden ya no está esperando tu confirmación' });
     }
-    if (order.mandadito.toString() !== req.user._id.toString()) {
+    if (!order.mandadito || order.mandadito.toString() !== req.user._id.toString()) {
       return res.status(403).json({ message: 'No autorizado' });
     }
     if (req.user.credit < order.amount) {
@@ -174,14 +189,12 @@ const acceptDirectOrder = async (req, res) => {
     await req.user.save();
     order.status = 'accepted';
     
-    // Asegurar que las coordenadas existan
+    // Asegurar coordenadas
     if (!order.pickupLocation?.lat) {
-      const pickupCoords = await geocodeAddress(order.pickupAddress);
-      order.pickupLocation = pickupCoords;
+      order.pickupLocation = await geocodeAddress(order.pickupAddress);
     }
     if (!order.deliveryLocation?.lat) {
-      const deliveryCoords = await geocodeAddress(order.deliveryAddress);
-      order.deliveryLocation = deliveryCoords;
+      order.deliveryLocation = await geocodeAddress(order.deliveryAddress);
     }
     
     await order.save();
@@ -193,7 +206,11 @@ const acceptDirectOrder = async (req, res) => {
       message: `Tu mandado ha sido aceptado por ${req.user.name}`
     });
     
-    await notifyOrderAccepted(order, req.user.name);
+    try {
+      await notifyOrderAccepted(order, req.user.name);
+    } catch (e) {
+      console.log('Error notificando:', e.message);
+    }
 
     res.json({ 
       order, 
@@ -201,6 +218,7 @@ const acceptDirectOrder = async (req, res) => {
       message: `✅ Orden aceptada. Se descontaron C$${order.amount}.` 
     });
   } catch (error) {
+    console.error('Error en acceptDirectOrder:', error);
     res.status(500).json({ message: error.message });
   }
 };
@@ -212,7 +230,7 @@ const rejectDirectOrder = async (req, res) => {
     if (order.status !== 'pending_confirmation') {
       return res.status(400).json({ message: 'Esta orden ya no está esperando tu confirmación' });
     }
-    if (order.mandadito.toString() !== req.user._id.toString()) {
+    if (!order.mandadito || order.mandadito.toString() !== req.user._id.toString()) {
       return res.status(403).json({ message: 'No autorizado' });
     }
 
@@ -232,6 +250,7 @@ const rejectDirectOrder = async (req, res) => {
       message: `Has rechazado la orden. Quedará disponible.` 
     });
   } catch (error) {
+    console.error('Error en rejectDirectOrder:', error);
     res.status(500).json({ message: error.message });
   }
 };
@@ -252,14 +271,12 @@ const acceptOrder = async (req, res) => {
     order.mandadito = req.user._id;
     order.status = 'accepted';
     
-    // Asegurar que las coordenadas existan
+    // Asegurar coordenadas
     if (!order.pickupLocation?.lat) {
-      const pickupCoords = await geocodeAddress(order.pickupAddress);
-      order.pickupLocation = pickupCoords;
+      order.pickupLocation = await geocodeAddress(order.pickupAddress);
     }
     if (!order.deliveryLocation?.lat) {
-      const deliveryCoords = await geocodeAddress(order.deliveryAddress);
-      order.deliveryLocation = deliveryCoords;
+      order.deliveryLocation = await geocodeAddress(order.deliveryAddress);
     }
     
     await order.save();
@@ -271,7 +288,11 @@ const acceptOrder = async (req, res) => {
       message: `Tu mandado ha sido aceptado por ${req.user.name}`
     });
     
-    await notifyOrderAccepted(order, req.user.name);
+    try {
+      await notifyOrderAccepted(order, req.user.name);
+    } catch (e) {
+      console.log('Error notificando:', e.message);
+    }
 
     res.json({ 
       order, 
@@ -279,6 +300,7 @@ const acceptOrder = async (req, res) => {
       message: `✅ Orden aceptada. Se descontaron C$${order.amount}.` 
     });
   } catch (error) {
+    console.error('Error en acceptOrder:', error);
     res.status(500).json({ message: error.message });
   }
 };
@@ -314,10 +336,15 @@ const markAsDelivered = async (req, res) => {
       });
     }
     
-    await notifyOrderDelivered(order, req.user.name);
+    try {
+      await notifyOrderDelivered(order, req.user.name);
+    } catch (e) {
+      console.log('Error notificando:', e.message);
+    }
 
     res.json({ order, message: '📦 Pedido marcado como entregado. Esperando confirmación.' });
   } catch (error) {
+    console.error('Error en markAsDelivered:', error);
     res.status(500).json({ message: error.message });
   }
 };
@@ -341,6 +368,7 @@ const requestRecharge = async (req, res) => {
       deposit
     });
   } catch (error) {
+    console.error('Error en requestRecharge:', error);
     res.status(500).json({ message: error.message });
   }
 };
@@ -351,6 +379,7 @@ const getEarningsReport = async (req, res) => {
     const totalEarnings = orders.length * 5;
     res.json({ totalOrders: orders.length, totalEarnings, orders });
   } catch (error) {
+    console.error('Error en getEarningsReport:', error);
     res.status(500).json({ message: error.message });
   }
 };
@@ -364,6 +393,7 @@ const toggleShareLocation = async (req, res) => {
       message: req.user.isSharingLocation ? 'Compartiendo ubicación activado' : 'Compartiendo ubicación desactivado' 
     });
   } catch (error) {
+    console.error('Error en toggleShareLocation:', error);
     res.status(500).json({ message: error.message });
   }
 };
@@ -399,7 +429,6 @@ const updateLocation = async (req, res) => {
         location: { lat, lng, accuracy },
         timestamp: new Date()
       });
-      console.log(`✅ Ubicación enviada al cliente ${order.client._id} para orden ${order._id}`);
     }
     
     res.json({ message: 'Ubicación actualizada', location: req.user.currentLocation });
@@ -414,7 +443,7 @@ module.exports = {
   toggleAvailability,
   updateWorkSchedule,
   getOrders,
-  getOrderDetails, // NUEVO
+  getOrderDetails,
   getPendingOrders,
   acceptDirectOrder,
   rejectDirectOrder,
