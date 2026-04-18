@@ -1,16 +1,31 @@
 const Order = require('../models/Order');
 const User = require('../models/User');
 const Deposit = require('../models/Deposit');
+const axios = require('axios');
 
-// ==================== FUNCIONES BÁSICAS ====================
+// Geocodificar dirección
+const geocodeAddress = async (address) => {
+  try {
+    const response = await axios.get('https://nominatim.openstreetmap.org/search', {
+      params: { q: `${address}, Juigalpa, Chontales, Nicaragua`, format: 'json', limit: 1 },
+      headers: { 'User-Agent': 'PuebloClick/1.0' }
+    });
+    if (response.data && response.data.length > 0) {
+      return { lat: parseFloat(response.data[0].lat), lng: parseFloat(response.data[0].lon) };
+    }
+    return { lat: 12.106, lng: -85.364 };
+  } catch (error) {
+    return { lat: 12.106, lng: -85.364 };
+  }
+};
 
+// ==================== PERFIL Y DISPONIBILIDAD ====================
 const getProfile = async (req, res) => {
   try {
-    const mandadito = await User.findById(req.user._id).select('-password');
-    res.json(mandadito);
+    const user = await User.findById(req.user._id).select('-password');
+    res.json(user);
   } catch (error) {
-    console.error('Error en getProfile:', error);
-    res.status(500).json({ message: 'Error al obtener perfil' });
+    res.status(500).json({ message: error.message });
   }
 };
 
@@ -20,41 +35,25 @@ const toggleAvailability = async (req, res) => {
     await req.user.save();
     res.json({ isAvailable: req.user.isAvailable });
   } catch (error) {
-    console.error('Error en toggleAvailability:', error);
-    res.status(500).json({ message: 'Error al cambiar disponibilidad' });
+    res.status(500).json({ message: error.message });
   }
 };
 
 const updateWorkSchedule = async (req, res) => {
   try {
     const { startTime, endTime, lunchStart, lunchEnd, workDays, enabled } = req.body;
-    
-    if (req.user.role !== 'mandadito') {
-      return res.status(403).json({ message: 'Solo mandaditos pueden tener horario' });
-    }
-    
     req.user.workSchedule = {
       enabled: enabled !== undefined ? enabled : true,
       startTime: startTime || '08:00',
       endTime: endTime || '17:00',
       lunchStart: lunchStart || '12:00',
       lunchEnd: lunchEnd || '13:00',
-      workDays: workDays || {
-        monday: true, tuesday: true, wednesday: true, thursday: true, 
-        friday: true, saturday: false, sunday: false
-      }
+      workDays: workDays || { monday: true, tuesday: true, wednesday: true, thursday: true, friday: true, saturday: false, sunday: false }
     };
-    
     await req.user.save();
-    
-    res.json({ 
-      message: 'Horario actualizado', 
-      workSchedule: req.user.workSchedule, 
-      isAvailable: req.user.isAvailable 
-    });
+    res.json({ message: 'Horario actualizado', workSchedule: req.user.workSchedule });
   } catch (error) {
-    console.error('Error en updateWorkSchedule:', error);
-    res.status(500).json({ message: 'Error al actualizar horario' });
+    res.status(500).json({ message: error.message });
   }
 };
 
@@ -65,335 +64,190 @@ const getOrders = async (req, res) => {
       .sort({ createdAt: -1 });
     res.json(orders);
   } catch (error) {
-    console.error('Error en getOrders:', error);
-    res.json([]);
+    res.status(500).json({ message: error.message });
   }
 };
 
-// ==================== ESTA ES LA FUNCIÓN CORREGIDA - SIMPLE Y SEGURA ====================
+const getOrderDetails = async (req, res) => {
+  try {
+    const order = await Order.findById(req.params.orderId)
+      .populate('client', 'name phone profilePhoto')
+      .populate('mandadito', 'name phone profilePhoto currentLocation');
+    if (!order) return res.status(404).json({ message: 'Orden no encontrada' });
+    res.json(order);
+  } catch (error) {
+    res.status(500).json({ message: error.message });
+  }
+};
+
+// ==================== ÓRDENES PENDIENTES - CORREGIDO ====================
 const getPendingOrders = async (req, res) => {
   try {
-    console.log('🔍 Buscando órdenes pendientes para:', req.user._id);
-    
-    // Buscar órdenes con status 'pending'
-    const publicOrders = await Order.find({ 
-      status: 'pending' 
-    })
-    .populate('client', 'name phone')
-    .sort({ createdAt: -1 })
-    .lean()
-    .catch(err => {
-      console.error('Error buscando órdenes públicas:', err);
-      return [];
-    });
-    
+    // Buscar órdenes públicas (pending)
+    const publicOrders = await Order.find({ status: 'pending' })
+      .populate('client', 'name phone profilePhoto')
+      .sort({ createdAt: -1 })
+      .lean();
+
     // Buscar órdenes asignadas directamente a este mandadito
     const directOrders = await Order.find({ 
       status: 'pending_confirmation',
       mandadito: req.user._id 
     })
-    .populate('client', 'name phone')
-    .sort({ createdAt: -1 })
-    .lean()
-    .catch(err => {
-      console.error('Error buscando órdenes directas:', err);
-      return [];
-    });
-    
-    // Combinar resultados
+      .populate('client', 'name phone profilePhoto')
+      .sort({ createdAt: -1 })
+      .lean();
+
+    // Combinar y devolver
     const allOrders = [...publicOrders, ...directOrders];
-    
-    console.log(`📋 Encontradas ${allOrders.length} órdenes pendientes`);
-    
-    // Asegurar que cada orden tenga los campos necesarios
-    const safeOrders = allOrders.map(order => ({
-      _id: order._id,
-      description: order.description || 'Sin descripción',
-      pickupAddress: order.pickupAddress || 'Dirección no especificada',
-      deliveryAddress: order.deliveryAddress || 'Dirección no especificada',
-      amount: order.amount || 5,
-      status: order.status || 'pending',
-      createdAt: order.createdAt || new Date(),
-      client: order.client || { _id: 'unknown', name: 'Cliente', phone: '' }
-    }));
-    
-    res.json(safeOrders);
+    res.json(allOrders);
   } catch (error) {
-    console.error('❌ Error general en getPendingOrders:', error);
-    // Siempre devolver array vacío en caso de error
-    res.json([]);
+    console.error('Error en getPendingOrders:', error);
+    res.status(500).json({ message: error.message });
   }
 };
 
 // ==================== ACEPTAR ÓRDENES ====================
-
 const acceptOrder = async (req, res) => {
   try {
-    const orderId = req.params.orderId;
-    const order = await Order.findById(orderId);
-    
-    if (!order) {
-      return res.status(404).json({ message: 'Orden no encontrada' });
-    }
-    
-    // Verificar que la orden esté disponible
+    const order = await Order.findById(req.params.orderId);
+    if (!order) return res.status(404).json({ message: 'Orden no encontrada' });
     if (order.status !== 'pending' && order.status !== 'pending_confirmation') {
-      return res.status(400).json({ message: 'Esta orden ya no está disponible' });
+      return res.status(400).json({ message: 'Orden no disponible' });
     }
-    
-    // Si es orden directa, verificar que sea para este mandadito
-    if (order.status === 'pending_confirmation') {
-      if (!order.mandadito || order.mandadito.toString() !== req.user._id.toString()) {
-        return res.status(403).json({ message: 'Esta orden no es para ti' });
-      }
+    if (order.status === 'pending_confirmation' && order.mandadito.toString() !== req.user._id.toString()) {
+      return res.status(403).json({ message: 'No autorizado' });
     }
-    
-    // Verificar crédito
     if (req.user.credit < order.amount) {
       return res.status(400).json({ message: `Crédito insuficiente. Necesitas C$${order.amount}` });
     }
-    
-    // Descontar crédito
+
     req.user.credit -= order.amount;
     await req.user.save();
     
-    // Actualizar orden
     order.mandadito = req.user._id;
     order.status = 'accepted';
-    await order.save();
     
-    // Notificar por socket
+    if (!order.pickupLocation?.lat) order.pickupLocation = await geocodeAddress(order.pickupAddress);
+    if (!order.deliveryLocation?.lat) order.deliveryLocation = await geocodeAddress(order.deliveryAddress);
+    
+    await order.save();
+
     const io = req.app.get('io');
     if (io) {
       io.emit('orderUpdated', order);
-      io.to(order.client.toString()).emit('orderConfirmed', {
-        order,
-        message: `${req.user.name} ha aceptado tu mandado`
-      });
+      io.to(order.client.toString()).emit('orderConfirmed', { order, message: `${req.user.name} aceptó tu mandado` });
     }
-    
-    res.json({ 
-      success: true,
-      order, 
-      creditRestante: req.user.credit, 
-      message: `✅ Orden aceptada. Se descontaron C$${order.amount}` 
-    });
+
+    res.json({ order, creditRestante: req.user.credit, message: '✅ Orden aceptada' });
   } catch (error) {
-    console.error('Error en acceptOrder:', error);
-    res.status(500).json({ message: 'Error al aceptar la orden' });
+    res.status(500).json({ message: error.message });
   }
 };
 
-const acceptDirectOrder = async (req, res) => {
-  // Misma lógica que acceptOrder
-  return acceptOrder(req, res);
-};
+const acceptDirectOrder = acceptOrder;
 
 const rejectDirectOrder = async (req, res) => {
   try {
     const order = await Order.findById(req.params.orderId);
-    
-    if (!order) {
-      return res.status(404).json({ message: 'Orden no encontrada' });
-    }
-    
-    if (order.status !== 'pending_confirmation') {
-      return res.status(400).json({ message: 'Esta orden ya no está esperando confirmación' });
-    }
-    
-    if (!order.mandadito || order.mandadito.toString() !== req.user._id.toString()) {
-      return res.status(403).json({ message: 'No autorizado' });
-    }
-    
-    // Liberar la orden para que otros mandaditos puedan tomarla
+    if (!order) return res.status(404).json({ message: 'Orden no encontrada' });
+    if (order.status !== 'pending_confirmation') return res.status(400).json({ message: 'Orden no está esperando confirmación' });
+    if (order.mandadito.toString() !== req.user._id.toString()) return res.status(403).json({ message: 'No autorizado' });
+
     order.mandadito = null;
     order.status = 'pending';
     await order.save();
-    
+
     const io = req.app.get('io');
-    if (io) {
-      io.emit('orderUpdated', order);
-    }
-    
-    res.json({ 
-      success: true,
-      message: 'Has rechazado la orden' 
-    });
+    if (io) io.emit('orderUpdated', order);
+
+    res.json({ message: 'Orden rechazada' });
   } catch (error) {
-    console.error('Error en rejectDirectOrder:', error);
-    res.status(500).json({ message: 'Error al rechazar la orden' });
+    res.status(500).json({ message: error.message });
   }
 };
 
-// ==================== MARCAR COMO ENTREGADO ====================
-
+// ==================== MARCAR ENTREGADO ====================
 const markAsDelivered = async (req, res) => {
   try {
     const order = await Order.findById(req.params.orderId);
-    
-    if (!order) {
-      return res.status(404).json({ message: 'Orden no encontrada' });
-    }
-    
+    if (!order) return res.status(404).json({ message: 'Orden no encontrada' });
     if (!order.mandadito || order.mandadito.toString() !== req.user._id.toString()) {
       return res.status(403).json({ message: 'No autorizado' });
     }
-    
-    if (order.status !== 'accepted') {
-      return res.status(400).json({ message: 'La orden no está en estado aceptado' });
-    }
-    
+    if (order.status !== 'accepted') return res.status(400).json({ message: 'Orden no está aceptada' });
+
     order.mandaditoDeliveredAt = new Date();
     order.status = 'delivered';
     await order.save();
-    
+
     const io = req.app.get('io');
     if (io) {
       io.emit('orderUpdated', order);
-      io.to(order.client.toString()).emit('orderDelivered', {
-        order,
-        message: 'Tu pedido ha sido entregado. Por favor confirma.'
-      });
+      io.to(order.client.toString()).emit('orderDelivered', { order, message: 'Tu pedido ha sido entregado' });
     }
-    
-    res.json({ 
-      success: true,
-      order, 
-      message: '📦 Pedido marcado como entregado' 
-    });
+
+    res.json({ order, message: '📦 Marcado como entregado' });
   } catch (error) {
-    console.error('Error en markAsDelivered:', error);
-    res.status(500).json({ message: 'Error al marcar como entregado' });
+    res.status(500).json({ message: error.message });
   }
 };
 
 // ==================== GANANCIAS Y RECARGAS ====================
-
 const getEarningsReport = async (req, res) => {
   try {
-    const orders = await Order.find({ 
-      mandadito: req.user._id, 
-      status: 'completed' 
-    });
-    
-    const totalEarnings = orders.length * 5;
-    
-    res.json({ 
-      totalOrders: orders.length, 
-      totalEarnings, 
-      orders 
-    });
+    const orders = await Order.find({ mandadito: req.user._id, status: 'completed' });
+    res.json({ totalOrders: orders.length, totalEarnings: orders.length * 5, orders });
   } catch (error) {
-    console.error('Error en getEarningsReport:', error);
-    res.json({ totalOrders: 0, totalEarnings: 0, orders: [] });
+    res.status(500).json({ message: error.message });
   }
 };
 
 const requestRecharge = async (req, res) => {
   try {
     const { amount, reference } = req.body;
-    
-    if (!amount || amount < 1) {
-      return res.status(400).json({ message: 'Monto inválido' });
-    }
-    
-    if (!reference) {
-      return res.status(400).json({ message: 'Referencia requerida' });
-    }
-    
-    const deposit = await Deposit.create({
-      mandadito: req.user._id,
-      amount,
-      reference,
-    });
-    
-    res.json({
-      success: true,
-      message: 'Solicitud enviada. Realiza el depósito y espera confirmación.',
-      adminPhone: '85202908',
-      deposit
-    });
+    if (!amount || amount < 1) return res.status(400).json({ message: 'Monto inválido' });
+    if (!reference) return res.status(400).json({ message: 'Referencia requerida' });
+
+    const deposit = await Deposit.create({ mandadito: req.user._id, amount, reference });
+    res.json({ message: 'Solicitud enviada', adminPhone: '85202908', deposit });
   } catch (error) {
-    console.error('Error en requestRecharge:', error);
-    res.status(500).json({ message: 'Error al solicitar recarga' });
+    res.status(500).json({ message: error.message });
   }
 };
 
 // ==================== UBICACIÓN ====================
-
 const toggleShareLocation = async (req, res) => {
   try {
     req.user.isSharingLocation = !req.user.isSharingLocation;
     await req.user.save();
-    
-    res.json({ 
-      isSharingLocation: req.user.isSharingLocation, 
-      message: req.user.isSharingLocation ? 'Compartiendo ubicación' : 'Ubicación desactivada' 
-    });
+    res.json({ isSharingLocation: req.user.isSharingLocation, message: req.user.isSharingLocation ? 'Compartiendo' : 'Desactivado' });
   } catch (error) {
-    console.error('Error en toggleShareLocation:', error);
-    res.status(500).json({ message: 'Error al cambiar estado' });
+    res.status(500).json({ message: error.message });
   }
 };
 
 const updateLocation = async (req, res) => {
   try {
-    const { lat, lng } = req.body;
-    
-    if (!lat || !lng) {
-      return res.status(400).json({ message: 'Coordenadas requeridas' });
-    }
-    
-    req.user.currentLocation = { 
-      lat, 
-      lng, 
-      lastUpdate: new Date() 
-    };
+    const { lat, lng, accuracy } = req.body;
+    if (!lat || !lng) return res.status(400).json({ message: 'Coordenadas requeridas' });
+
+    req.user.currentLocation = { lat, lng, accuracy, lastUpdate: new Date() };
     await req.user.save();
-    
-    // Notificar a clientes con órdenes activas
-    const activeOrders = await Order.find({ 
-      mandadito: req.user._id, 
-      status: { $in: ['accepted', 'delivered'] } 
-    });
-    
+
+    const activeOrders = await Order.find({ mandadito: req.user._id, status: { $in: ['accepted', 'delivered'] } });
     const io = req.app.get('io');
     if (io) {
       for (const order of activeOrders) {
-        io.to(order.client.toString()).emit('locationUpdate', { 
-          orderId: order._id, 
-          location: { lat, lng }
-        });
+        io.to(order.client.toString()).emit('locationUpdate', { orderId: order._id, location: { lat, lng } });
       }
     }
-    
-    res.json({ success: true, message: 'Ubicación actualizada' });
+
+    res.json({ message: 'Ubicación actualizada', location: req.user.currentLocation });
   } catch (error) {
-    console.error('Error en updateLocation:', error);
-    res.status(500).json({ message: 'Error al actualizar ubicación' });
+    res.status(500).json({ message: error.message });
   }
 };
-
-// ==================== DETALLES DE ORDEN ====================
-
-const getOrderDetails = async (req, res) => {
-  try {
-    const order = await Order.findById(req.params.orderId)
-      .populate('client', 'name phone profilePhoto')
-      .populate('mandadito', 'name phone profilePhoto');
-    
-    if (!order) {
-      return res.status(404).json({ message: 'Orden no encontrada' });
-    }
-    
-    res.json(order);
-  } catch (error) {
-    console.error('Error en getOrderDetails:', error);
-    res.status(500).json({ message: 'Error al obtener detalles' });
-  }
-};
-
-// ==================== EXPORTAR ====================
 
 module.exports = {
   getProfile,
