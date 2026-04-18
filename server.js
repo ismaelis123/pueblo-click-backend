@@ -52,28 +52,22 @@ const io = socketIo(server, {
 app.set('io', io);
 
 // ==================== RUTA DE DIAGNÓSTICO ====================
-// Poner esto ANTES de las demás rutas
 app.get('/api/diagnostico/pending', async (req, res) => {
   try {
     const Order = require('./models/Order');
     const User = require('./models/User');
     
-    console.log('🔍 Ejecutando diagnóstico de órdenes pendientes...');
+    console.log('🔍 Ejecutando diagnóstico...');
     
-    // Buscar un mandadito para prueba
     const mandadito = await User.findOne({ role: 'mandadito' }).select('-password');
     
     if (!mandadito) {
-      console.log('❌ No hay mandaditos en la base de datos');
       return res.json({ 
         success: false, 
-        error: 'No hay mandaditos registrados en la base de datos' 
+        error: 'No hay mandaditos en la base de datos' 
       });
     }
     
-    console.log('✅ Mandadito encontrado:', mandadito.name);
-    
-    // Buscar órdenes pendientes
     const publicOrders = await Order.find({ status: 'pending' })
       .populate('client', 'name phone')
       .limit(10)
@@ -89,45 +83,61 @@ app.get('/api/diagnostico/pending', async (req, res) => {
     
     const allOrders = [...publicOrders, ...directOrders];
     
-    console.log(`✅ Encontradas ${publicOrders.length} órdenes públicas y ${directOrders.length} órdenes directas`);
-    
-    // Estadísticas de la base de datos
-    const totalOrders = await Order.countDocuments();
-    const pendingCount = await Order.countDocuments({ status: 'pending' });
-    const pendingConfirmationCount = await Order.countDocuments({ status: 'pending_confirmation' });
-    const acceptedCount = await Order.countDocuments({ status: 'accepted' });
-    const deliveredCount = await Order.countDocuments({ status: 'delivered' });
-    const completedCount = await Order.countDocuments({ status: 'completed' });
-    
     res.json({
       success: true,
       mandadito: {
         _id: mandadito._id,
         name: mandadito.name,
-        phone: mandadito.phone,
-        isVerified: mandadito.isVerified,
-        credit: mandadito.credit,
-        isAvailable: mandadito.isAvailable
-      },
-      estadisticas: {
-        totalOrdenes: totalOrders,
-        pendientes: pendingCount,
-        pendientesConfirmacion: pendingConfirmationCount,
-        aceptadas: acceptedCount,
-        entregadas: deliveredCount,
-        completadas: completedCount
+        isVerified: mandadito.isVerified
       },
       ordenesEncontradas: allOrders.length,
       ordenes: allOrders
     });
     
   } catch (error) {
-    console.error('❌ Error en diagnóstico:', error);
-    res.status(500).json({
-      success: false,
-      error: error.message,
-      stack: error.stack
-    });
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+// ==================== RUTA DIRECTA PARA ÓRDENES PENDIENTES ====================
+const { protect } = require('./middleware/auth');
+const roleCheck = require('./middleware/roleCheck');
+
+app.get('/api/mandadito/orders/pending', protect, roleCheck('mandadito'), async (req, res) => {
+  try {
+    console.log('🔍 [RUTA DIRECTA] Buscando órdenes para mandadito:', req.user._id);
+    
+    const Order = require('./models/Order');
+    
+    // Buscar órdenes públicas
+    const publicOrders = await Order.find({ status: 'pending' })
+      .populate('client', 'name phone profilePhoto')
+      .sort({ createdAt: -1 })
+      .lean();
+    
+    console.log(`✅ [RUTA DIRECTA] Órdenes públicas: ${publicOrders.length}`);
+    
+    // Buscar órdenes asignadas directamente
+    const directOrders = await Order.find({ 
+      status: 'pending_confirmation',
+      mandadito: req.user._id 
+    })
+      .populate('client', 'name phone profilePhoto')
+      .sort({ createdAt: -1 })
+      .lean();
+    
+    console.log(`✅ [RUTA DIRECTA] Órdenes directas: ${directOrders.length}`);
+    
+    // Combinar y devolver
+    const allOrders = [...publicOrders, ...directOrders];
+    
+    console.log(`📦 [RUTA DIRECTA] Total enviado: ${allOrders.length}`);
+    
+    res.json(allOrders);
+    
+  } catch (error) {
+    console.error('❌ [RUTA DIRECTA] Error:', error.message);
+    res.status(500).json({ message: error.message });
   }
 });
 
@@ -174,8 +184,7 @@ app.use((req, res) => {
 app.use((err, req, res, next) => {
   console.error('❌ Error del servidor:', err.stack);
   res.status(500).json({ 
-    message: err.message || 'Error del servidor',
-    stack: process.env.NODE_ENV === 'production' ? null : err.stack
+    message: err.message || 'Error del servidor'
   });
 });
 
@@ -195,18 +204,12 @@ server.listen(PORT, () => {
 // Manejo de cierre graceful
 process.on('SIGTERM', () => {
   console.log('SIGTERM recibido, cerrando servidor...');
-  server.close(() => {
-    console.log('Servidor cerrado');
-    process.exit(0);
-  });
+  server.close(() => process.exit(0));
 });
 
 process.on('SIGINT', () => {
   console.log('SIGINT recibido, cerrando servidor...');
-  server.close(() => {
-    console.log('Servidor cerrado');
-    process.exit(0);
-  });
+  server.close(() => process.exit(0));
 });
 
 module.exports = app;

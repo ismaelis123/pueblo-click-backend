@@ -97,48 +97,6 @@ const getOrderDetails = async (req, res) => {
   }
 };
 
-// ==================== ÓRDENES PENDIENTES - CORREGIDO ====================
-const getPendingOrders = async (req, res) => {
-  try {
-    console.log('🔍 [getPendingOrders] Buscando para mandadito:', req.user._id);
-    
-    // Buscar órdenes públicas
-    const publicOrders = await Order.find({ status: 'pending' })
-      .populate('client', 'name phone profilePhoto')
-      .sort({ createdAt: -1 })
-      .lean()
-      .catch(err => {
-        console.error('❌ Error buscando órdenes públicas:', err.message);
-        return [];
-      });
-    
-    console.log(`📋 [getPendingOrders] Órdenes públicas: ${publicOrders.length}`);
-    
-    // Buscar órdenes asignadas directamente
-    const directOrders = await Order.find({ 
-      status: 'pending_confirmation',
-      mandadito: req.user._id 
-    })
-      .populate('client', 'name phone profilePhoto')
-      .sort({ createdAt: -1 })
-      .lean()
-      .catch(err => {
-        console.error('❌ Error buscando órdenes directas:', err.message);
-        return [];
-      });
-    
-    console.log(`📋 [getPendingOrders] Órdenes directas: ${directOrders.length}`);
-    
-    // Combinar y devolver
-    const allOrders = [...publicOrders, ...directOrders];
-    res.json(allOrders);
-    
-  } catch (error) {
-    console.error('❌ [getPendingOrders] Error general:', error.message);
-    res.status(500).json({ message: error.message });
-  }
-};
-
 // ==================== ACEPTAR ÓRDENES ====================
 const acceptOrder = async (req, res) => {
   try {
@@ -374,7 +332,7 @@ module.exports = {
   updateWorkSchedule,
   getOrders,
   getOrderDetails,
-  getPendingOrders,
+  // getPendingOrders,  // QUITADO DEL EXPORT
   acceptDirectOrder,
   rejectDirectOrder,
   acceptOrder,

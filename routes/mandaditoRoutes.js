@@ -7,7 +7,7 @@ const {
   updateWorkSchedule,
   getOrders,
   getOrderDetails,
-  getPendingOrders,
+  // getPendingOrders,  // COMENTADO - Ya no se usa
   acceptDirectOrder,
   rejectDirectOrder,
   acceptOrder,
@@ -28,7 +28,7 @@ router.put('/availability', toggleAvailability);
 router.put('/schedule', updateWorkSchedule);
 router.get('/orders', getOrders);
 router.get('/orders/:orderId', getOrderDetails);
-router.get('/orders/pending', getPendingOrders);  // ESTA ES LA RUTA
+// router.get('/orders/pending', getPendingOrders);  // COMENTADO - La ruta está en server.js
 router.put('/orders/:orderId/accept-direct', acceptDirectOrder);
 router.put('/orders/:orderId/reject-direct', rejectDirectOrder);
 router.put('/orders/:orderId/accept', acceptOrder);
