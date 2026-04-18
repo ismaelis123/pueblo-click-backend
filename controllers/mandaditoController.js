@@ -23,7 +23,6 @@ const geocodeAddress = async (address) => {
     }
     return { lat: 12.106, lng: -85.364 };
   } catch (error) {
-    console.error('Error geocodificando:', error.message);
     return { lat: 12.106, lng: -85.364 };
   }
 };
@@ -34,7 +33,6 @@ const getProfile = async (req, res) => {
     const user = await User.findById(req.user._id).select('-password');
     res.json(user);
   } catch (error) {
-    console.error('Error en getProfile:', error);
     res.status(500).json({ message: error.message });
   }
 };
@@ -45,7 +43,6 @@ const toggleAvailability = async (req, res) => {
     await req.user.save();
     res.json({ isAvailable: req.user.isAvailable });
   } catch (error) {
-    console.error('Error en toggleAvailability:', error);
     res.status(500).json({ message: error.message });
   }
 };
@@ -69,7 +66,6 @@ const updateWorkSchedule = async (req, res) => {
     await req.user.save();
     res.json({ message: 'Horario actualizado', workSchedule: req.user.workSchedule });
   } catch (error) {
-    console.error('Error en updateWorkSchedule:', error);
     res.status(500).json({ message: error.message });
   }
 };
@@ -81,7 +77,6 @@ const getOrders = async (req, res) => {
       .sort({ createdAt: -1 });
     res.json(orders);
   } catch (error) {
-    console.error('Error en getOrders:', error);
     res.status(500).json({ message: error.message });
   }
 };
@@ -98,23 +93,26 @@ const getOrderDetails = async (req, res) => {
     
     res.json(order);
   } catch (error) {
-    console.error('Error en getOrderDetails:', error);
     res.status(500).json({ message: error.message });
   }
 };
 
-// ==================== ÓRDENES PENDIENTES ====================
+// ==================== ÓRDENES PENDIENTES - CORREGIDO ====================
 const getPendingOrders = async (req, res) => {
   try {
-    console.log('🔍 Buscando órdenes pendientes para mandadito:', req.user._id);
+    console.log('🔍 [getPendingOrders] Buscando para mandadito:', req.user._id);
     
     // Buscar órdenes públicas
     const publicOrders = await Order.find({ status: 'pending' })
       .populate('client', 'name phone profilePhoto')
       .sort({ createdAt: -1 })
-      .lean();
+      .lean()
+      .catch(err => {
+        console.error('❌ Error buscando órdenes públicas:', err.message);
+        return [];
+      });
     
-    console.log(`📋 Órdenes públicas encontradas: ${publicOrders.length}`);
+    console.log(`📋 [getPendingOrders] Órdenes públicas: ${publicOrders.length}`);
     
     // Buscar órdenes asignadas directamente
     const directOrders = await Order.find({ 
@@ -123,16 +121,20 @@ const getPendingOrders = async (req, res) => {
     })
       .populate('client', 'name phone profilePhoto')
       .sort({ createdAt: -1 })
-      .lean();
+      .lean()
+      .catch(err => {
+        console.error('❌ Error buscando órdenes directas:', err.message);
+        return [];
+      });
     
-    console.log(`📋 Órdenes directas encontradas: ${directOrders.length}`);
+    console.log(`📋 [getPendingOrders] Órdenes directas: ${directOrders.length}`);
     
-    // Combinar resultados
+    // Combinar y devolver
     const allOrders = [...publicOrders, ...directOrders];
-    
     res.json(allOrders);
+    
   } catch (error) {
-    console.error('❌ Error en getPendingOrders:', error);
+    console.error('❌ [getPendingOrders] Error general:', error.message);
     res.status(500).json({ message: error.message });
   }
 };
@@ -158,11 +160,9 @@ const acceptOrder = async (req, res) => {
       return res.status(400).json({ message: `Crédito insuficiente. Necesitas C$${order.amount}` });
     }
     
-    // Descontar crédito
     req.user.credit -= order.amount;
     await req.user.save();
     
-    // Actualizar orden
     order.mandadito = req.user._id;
     order.status = 'accepted';
     
@@ -175,7 +175,6 @@ const acceptOrder = async (req, res) => {
     
     await order.save();
     
-    // Notificar por socket
     const io = req.app.get('io');
     if (io) {
       io.emit('orderUpdated', order);

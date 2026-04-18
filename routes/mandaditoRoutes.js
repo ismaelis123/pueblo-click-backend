@@ -28,7 +28,7 @@ router.put('/availability', toggleAvailability);
 router.put('/schedule', updateWorkSchedule);
 router.get('/orders', getOrders);
 router.get('/orders/:orderId', getOrderDetails);
-router.get('/orders/pending', getPendingOrders);
+router.get('/orders/pending', getPendingOrders);  // ESTA ES LA RUTA
 router.put('/orders/:orderId/accept-direct', acceptDirectOrder);
 router.put('/orders/:orderId/reject-direct', rejectDirectOrder);
 router.put('/orders/:orderId/accept', acceptOrder);
