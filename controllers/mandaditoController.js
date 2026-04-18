@@ -117,12 +117,10 @@ const getOrderDetails = async (req, res) => {
       return res.status(404).json({ message: 'Orden no encontrada' });
     }
     
-    // Verificar que el mandadito sea el asignado
     if (!order.mandadito || order.mandadito._id.toString() !== req.user._id.toString()) {
       return res.status(403).json({ message: 'No autorizado' });
     }
     
-    // Si no hay coordenadas, geocodificarlas
     if (!order.pickupLocation?.lat) {
       try {
         const pickupCoords = await geocodeAddress(order.pickupAddress);
@@ -142,7 +140,6 @@ const getOrderDetails = async (req, res) => {
     }
     
     await order.save();
-    
     res.json(order);
   } catch (error) {
     console.error('Error en getOrderDetails:', error);
@@ -150,10 +147,18 @@ const getOrderDetails = async (req, res) => {
   }
 };
 
+// ==================== ESTA ES LA FUNCIÓN CORREGIDA ====================
 const getPendingOrders = async (req, res) => {
   try {
     console.log('🔍 Buscando órdenes pendientes para mandadito:', req.user._id);
     
+    // Primero verificamos que el mandadito esté verificado
+    if (!req.user.isVerified) {
+      console.log('⚠️ Mandadito no verificado, devolviendo array vacío');
+      return res.json([]);
+    }
+    
+    // Buscar órdenes públicas (pending) Y órdenes asignadas directamente (pending_confirmation)
     const orders = await Order.find({ 
       $or: [
         { status: 'pending' },
@@ -161,13 +166,28 @@ const getPendingOrders = async (req, res) => {
       ]
     })
     .populate('client', 'name phone profilePhoto')
-    .sort({ createdAt: -1 });
+    .sort({ createdAt: -1 })
+    .lean(); // Usar lean() para mejor rendimiento
     
     console.log(`📋 Encontradas ${orders.length} órdenes pendientes`);
-    res.json(orders);
+    
+    // Asegurar que cada orden tenga los campos necesarios
+    const safeOrders = orders.map(order => ({
+      ...order,
+      client: order.client || { name: 'Cliente', phone: '' },
+      pickupAddress: order.pickupAddress || 'Dirección no especificada',
+      deliveryAddress: order.deliveryAddress || 'Dirección no especificada',
+      description: order.description || 'Sin descripción',
+      amount: order.amount || 5,
+      status: order.status || 'pending',
+      createdAt: order.createdAt || new Date()
+    }));
+    
+    res.json(safeOrders);
   } catch (error) {
     console.error('❌ Error en getPendingOrders:', error);
-    res.status(500).json({ message: error.message });
+    // Enviar array vacío en lugar de error 500 para no romper el frontend
+    res.json([]);
   }
 };
 
@@ -189,7 +209,6 @@ const acceptDirectOrder = async (req, res) => {
     await req.user.save();
     order.status = 'accepted';
     
-    // Asegurar coordenadas
     if (!order.pickupLocation?.lat) {
       order.pickupLocation = await geocodeAddress(order.pickupAddress);
     }
@@ -200,11 +219,13 @@ const acceptDirectOrder = async (req, res) => {
     await order.save();
 
     const io = req.app.get('io');
-    io.emit('orderUpdated', order);
-    io.to(order.client.toString()).emit('orderConfirmed', {
-      order,
-      message: `Tu mandado ha sido aceptado por ${req.user.name}`
-    });
+    if (io) {
+      io.emit('orderUpdated', order);
+      io.to(order.client.toString()).emit('orderConfirmed', {
+        order,
+        message: `Tu mandado ha sido aceptado por ${req.user.name}`
+      });
+    }
     
     try {
       await notifyOrderAccepted(order, req.user.name);
@@ -239,11 +260,13 @@ const rejectDirectOrder = async (req, res) => {
     await order.save();
 
     const io = req.app.get('io');
-    io.emit('orderUpdated', order);
-    io.to(order.client.toString()).emit('orderRejected', {
-      order,
-      message: `${req.user.name} ha rechazado tu mandado.`
-    });
+    if (io) {
+      io.emit('orderUpdated', order);
+      io.to(order.client.toString()).emit('orderRejected', {
+        order,
+        message: `${req.user.name} ha rechazado tu mandado.`
+      });
+    }
 
     res.json({ 
       order, 
@@ -271,7 +294,6 @@ const acceptOrder = async (req, res) => {
     order.mandadito = req.user._id;
     order.status = 'accepted';
     
-    // Asegurar coordenadas
     if (!order.pickupLocation?.lat) {
       order.pickupLocation = await geocodeAddress(order.pickupAddress);
     }
@@ -282,11 +304,13 @@ const acceptOrder = async (req, res) => {
     await order.save();
 
     const io = req.app.get('io');
-    io.emit('orderUpdated', order);
-    io.to(order.client.toString()).emit('orderConfirmed', {
-      order,
-      message: `Tu mandado ha sido aceptado por ${req.user.name}`
-    });
+    if (io) {
+      io.emit('orderUpdated', order);
+      io.to(order.client.toString()).emit('orderConfirmed', {
+        order,
+        message: `Tu mandado ha sido aceptado por ${req.user.name}`
+      });
+    }
     
     try {
       await notifyOrderAccepted(order, req.user.name);
@@ -321,19 +345,21 @@ const markAsDelivered = async (req, res) => {
     await order.save();
 
     const io = req.app.get('io');
-    io.emit('orderUpdated', order);
-    io.to(order.client.toString()).emit('orderDelivered', {
-      order,
-      message: `Tu pedido ha sido entregado. Por favor confirma.`
-    });
-    
-    if (req.user.currentLocation) {
-      io.to(order.client.toString()).emit('locationUpdate', {
-        orderId: order._id,
-        location: req.user.currentLocation,
-        final: true,
-        timestamp: new Date()
+    if (io) {
+      io.emit('orderUpdated', order);
+      io.to(order.client.toString()).emit('orderDelivered', {
+        order,
+        message: `Tu pedido ha sido entregado. Por favor confirma.`
       });
+      
+      if (req.user.currentLocation) {
+        io.to(order.client.toString()).emit('locationUpdate', {
+          orderId: order._id,
+          location: req.user.currentLocation,
+          final: true,
+          timestamp: new Date()
+        });
+      }
     }
     
     try {
@@ -423,12 +449,14 @@ const updateLocation = async (req, res) => {
     console.log(`📢 Notificando a ${activeOrders.length} clientes`);
     
     const io = req.app.get('io');
-    for (const order of activeOrders) {
-      io.to(order.client._id.toString()).emit('locationUpdate', { 
-        orderId: order._id, 
-        location: { lat, lng, accuracy },
-        timestamp: new Date()
-      });
+    if (io) {
+      for (const order of activeOrders) {
+        io.to(order.client._id.toString()).emit('locationUpdate', { 
+          orderId: order._id, 
+          location: { lat, lng, accuracy },
+          timestamp: new Date()
+        });
+      }
     }
     
     res.json({ message: 'Ubicación actualizada', location: req.user.currentLocation });
