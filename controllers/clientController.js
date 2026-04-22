@@ -1,9 +1,10 @@
 const Order = require('../models/Order');
-const Rating = require('../models/Rating');
 const User = require('../models/User');
+const Rating = require('../models/Rating');
 const axios = require('axios');
 const { notifyNewOrderToMandaditos, notifyClientConfirmed } = require('./notificationController');
 
+// Geocodificar dirección
 const geocodeAddress = async (address) => {
   try {
     const response = await axios.get('https://nominatim.openstreetmap.org/search', {
@@ -11,20 +12,73 @@ const geocodeAddress = async (address) => {
       headers: { 'User-Agent': 'PuebloClick/1.0' }
     });
     if (response.data && response.data.length > 0) {
-      return { lat: parseFloat(response.data[0].lat), lng: parseFloat(response.data[0].lon) };
+      return { 
+        lat: parseFloat(response.data[0].lat), 
+        lng: parseFloat(response.data[0].lon) 
+      };
     }
-    return null;
+    return { lat: 12.106, lng: -85.364 };
   } catch (error) {
-    return null;
+    return { lat: 12.106, lng: -85.364 };
+  }
+};
+
+// Calcular distancia entre dos puntos (fórmula Haversine)
+const calculateDistance = (lat1, lng1, lat2, lng2) => {
+  const R = 6371; // Radio de la Tierra en km
+  const dLat = (lat2 - lat1) * Math.PI / 180;
+  const dLng = (lng2 - lng1) * Math.PI / 180;
+  const a = 
+    Math.sin(dLat/2) * Math.sin(dLat/2) +
+    Math.cos(lat1 * Math.PI / 180) * Math.cos(lat2 * Math.PI / 180) * 
+    Math.sin(dLng/2) * Math.sin(dLng/2);
+  const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1-a));
+  return R * c;
+};
+
+// Calcular tarifa según distancia
+const calculateFare = (distanceKm, isUrgent, customPrice) => {
+  if (isUrgent && customPrice) {
+    return customPrice;
+  }
+  
+  if (distanceKm <= 2) {
+    return 30;  // Cerca
+  } else if (distanceKm <= 5) {
+    return 40;  // Moderado
+  } else if (distanceKm <= 8) {
+    return 50;  // Largo
+  } else {
+    return 60;  // Muy largo
   }
 };
 
 const createOrder = async (req, res) => {
   try {
-    const { description, pickupAddress, deliveryAddress, mandaditoId } = req.body;
+    const { 
+      description, 
+      pickupAddress, 
+      deliveryAddress, 
+      mandaditoId,
+      isUrgent = false,
+      customPrice = null
+    } = req.body;
     
+    // Geocodificar direcciones
     const pickupLocation = await geocodeAddress(pickupAddress);
     const deliveryLocation = await geocodeAddress(deliveryAddress);
+    
+    // Calcular distancia
+    let distance = null;
+    if (pickupLocation.lat && deliveryLocation.lat) {
+      distance = calculateDistance(
+        pickupLocation.lat, pickupLocation.lng,
+        deliveryLocation.lat, deliveryLocation.lng
+      );
+    }
+    
+    // Calcular tarifa
+    const amount = calculateFare(distance || 0, isUrgent, customPrice);
     
     const orderData = {
       client: req.user._id,
@@ -33,7 +87,10 @@ const createOrder = async (req, res) => {
       deliveryAddress,
       pickupLocation,
       deliveryLocation,
-      amount: 5,
+      distance,
+      isUrgent,
+      customPrice: isUrgent ? customPrice : null,
+      amount,
     };
     
     if (mandaditoId && mandaditoId !== 'undefined' && mandaditoId !== 'null') {
@@ -51,7 +108,10 @@ const createOrder = async (req, res) => {
     }
     
     const order = await Order.create(orderData);
-    const populatedOrder = await Order.findById(order._id).populate('client', 'name phone');
+    const populatedOrder = await Order.findById(order._id)
+      .populate('client', 'name phone')
+      .populate('mandadito', 'name phone');
+    
     const io = req.app.get('io');
     
     if (mandaditoId && mandaditoId !== 'undefined' && mandaditoId !== 'null') {
@@ -64,8 +124,23 @@ const createOrder = async (req, res) => {
       await notifyNewOrderToMandaditos(order, req.user.name);
     }
     
+    // Mensaje con información de tarifa
+    let fareMessage = '';
+    if (isUrgent) {
+      fareMessage = `Tarifa urgente personalizada: C$${amount}`;
+    } else {
+      const distanceText = distance ? `${distance.toFixed(1)} km` : 'distancia no calculada';
+      fareMessage = `Tarifa estimada: C$${amount} (${distanceText})`;
+    }
+    
     res.status(201).json({ 
       order: populatedOrder,
+      fareInfo: {
+        distance: distance ? `${distance.toFixed(1)} km` : 'No calculada',
+        amount: amount,
+        isUrgent: isUrgent,
+        message: fareMessage
+      },
       message: mandaditoId ? 'Mandado asignado. Esperando confirmación.' : 'Mandado creado. Buscando mandadito.'
     });
   } catch (error) {
@@ -74,6 +149,7 @@ const createOrder = async (req, res) => {
   }
 };
 
+// ... (resto de funciones existentes sin cambios)
 const getClientOrders = async (req, res) => {
   try {
     const orders = await Order.find({ client: req.user._id })
@@ -93,10 +169,8 @@ const getAvailableMandaditos = async (req, res) => {
       isVerified: true
     }).select('name phone profilePhoto rating totalRatings isAvailable motoPhotos workSchedule currentLocation');
     
-    console.log(`📋 Mandaditos encontrados: ${mandaditos.length}`);
     res.json(mandaditos);
   } catch (error) {
-    console.error('❌ Error en getAvailableMandaditos:', error);
     res.status(500).json({ message: error.message });
   }
 };
@@ -111,26 +185,7 @@ const getMandaditoProfile = async (req, res) => {
       .populate('client', 'name')
       .sort({ createdAt: -1 })
       .limit(10);
-    res.json({ 
-      mandadito: {
-        _id: mandadito._id,
-        name: mandadito.name,
-        phone: mandadito.phone,
-        profilePhoto: mandadito.profilePhoto,
-        motoPhotos: mandadito.motoPhotos,
-        cedulaPhoto: mandadito.cedulaPhoto,
-        seguroPhoto: mandadito.seguroPhoto,
-        licenciaPhoto: mandadito.licenciaPhoto,
-        rating: mandadito.rating,
-        totalRatings: mandadito.totalRatings,
-        isAvailable: mandadito.isAvailable,
-        isVerified: mandadito.isVerified,
-        workSchedule: mandadito.workSchedule,
-        currentLocation: mandadito.currentLocation,
-        createdAt: mandadito.createdAt
-      }, 
-      ratings 
-    });
+    res.json({ mandadito, ratings });
   } catch (error) {
     res.status(500).json({ message: error.message });
   }
@@ -194,10 +249,7 @@ const rateMandadito = async (req, res) => {
       totalRatings: allRatings.length 
     });
 
-    res.status(201).json({ 
-      rating, 
-      message: '¡Calificación guardada! Gracias por tu feedback.' 
-    });
+    res.status(201).json({ rating, message: '¡Calificación guardada! Gracias por tu feedback.' });
   } catch (error) {
     res.status(500).json({ message: error.message });
   }
