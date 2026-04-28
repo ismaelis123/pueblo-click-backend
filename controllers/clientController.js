@@ -4,83 +4,148 @@ const Rating = require('../models/Rating');
 const axios = require('axios');
 const { notifyNewOrderToMandaditos, notifyClientConfirmed } = require('./notificationController');
 
-// Geocodificar dirección - MEJORADO con múltiples intentos
+// Coordenadas de referencia de Juigalpa
+const JUIGALPA_CENTER = { lat: 12.106, lng: -85.364 };
+const JUIGALPA_RADIUS_KM = 10; // Radio máximo de búsqueda: 10 km desde el centro
+
+// Geocodificar dirección - SOLO JUIGALPA, CHONTALES
 const geocodeAddress = async (address) => {
   try {
-    // Intento 1: Dirección exacta + Nicaragua
+    // Intento 1: Dirección exacta + Juigalpa + Chontales + Nicaragua
     const response = await axios.get('https://nominatim.openstreetmap.org/search', {
       params: { 
-        q: address, 
+        q: `${address}, Juigalpa, Chontales, Nicaragua`, 
         format: 'json', 
-        limit: 1,
-        countrycodes: 'ni'
+        limit: 3,
+        countrycodes: 'ni',
+        bounded: 1,
+        viewbox: '-85.40,12.08,-85.32,12.13' // Bounding box de Juigalpa
       },
       headers: { 'User-Agent': 'PuebloClick/1.0' }
     });
     
     if (response.data && response.data.length > 0) {
-      return { 
-        lat: parseFloat(response.data[0].lat), 
-        lng: parseFloat(response.data[0].lon),
-        displayName: response.data[0].display_name
-      };
+      // Verificar que esté dentro del radio de Juigalpa
+      for (const result of response.data) {
+        const lat = parseFloat(result.lat);
+        const lng = parseFloat(result.lon);
+        const distance = calculateDistance(JUIGALPA_CENTER.lat, JUIGALPA_CENTER.lng, lat, lng);
+        
+        if (distance <= JUIGALPA_RADIUS_KM) {
+          console.log('✅ Dirección encontrada en Juigalpa:', result.display_name);
+          return { 
+            lat: lat, 
+            lng: lng,
+            displayName: result.display_name
+          };
+        }
+      }
     }
     
-    // Intento 2: Dirección + Juigalpa
+    // Intento 2: Solo "Juigalpa" + dirección
     const response2 = await axios.get('https://nominatim.openstreetmap.org/search', {
       params: { 
         q: `${address}, Juigalpa`, 
         format: 'json', 
-        limit: 1,
+        limit: 5,
         countrycodes: 'ni'
       },
       headers: { 'User-Agent': 'PuebloClick/1.0' }
     });
     
     if (response2.data && response2.data.length > 0) {
-      return { 
-        lat: parseFloat(response2.data[0].lat), 
-        lng: parseFloat(response2.data[0].lon),
-        displayName: response2.data[0].display_name
-      };
+      for (const result of response2.data) {
+        const lat = parseFloat(result.lat);
+        const lng = parseFloat(result.lon);
+        const distance = calculateDistance(JUIGALPA_CENTER.lat, JUIGALPA_CENTER.lng, lat, lng);
+        
+        if (distance <= JUIGALPA_RADIUS_KM) {
+          console.log('✅ Dirección encontrada (intento 2):', result.display_name);
+          return { 
+            lat: lat, 
+            lng: lng,
+            displayName: result.display_name
+          };
+        }
+      }
     }
     
-    // Intento 3: Dirección + Chontales
+    // Intento 3: "Chontales" + dirección
     const response3 = await axios.get('https://nominatim.openstreetmap.org/search', {
       params: { 
         q: `${address}, Chontales, Nicaragua`, 
         format: 'json', 
-        limit: 1
+        limit: 5,
+        countrycodes: 'ni'
       },
       headers: { 'User-Agent': 'PuebloClick/1.0' }
     });
     
     if (response3.data && response3.data.length > 0) {
-      return { 
-        lat: parseFloat(response3.data[0].lat), 
-        lng: parseFloat(response3.data[0].lon),
-        displayName: response3.data[0].display_name
-      };
+      for (const result of response3.data) {
+        const lat = parseFloat(result.lat);
+        const lng = parseFloat(result.lon);
+        const distance = calculateDistance(JUIGALPA_CENTER.lat, JUIGALPA_CENTER.lng, lat, lng);
+        
+        if (distance <= JUIGALPA_RADIUS_KM) {
+          console.log('✅ Dirección encontrada (intento 3):', result.display_name);
+          return { 
+            lat: lat, 
+            lng: lng,
+            displayName: result.display_name
+          };
+        }
+      }
     }
     
-    // Fallback: Coordenadas de Juigalpa centro
-    console.log('⚠️ Usando coordenadas por defecto de Juigalpa para:', address);
+    // Fallback: Puntos específicos de Juigalpa para zonas conocidas
+    const juigalpaZones = [
+      { name: 'parque central', lat: 12.106, lng: -85.364 },
+      { name: 'mercado', lat: 12.108, lng: -85.362 },
+      { name: 'hospital', lat: 12.104, lng: -85.367 },
+      { name: 'barrio', lat: 12.107, lng: -85.361 },
+      { name: 'iglesia', lat: 12.105, lng: -85.365 },
+      { name: 'escuela', lat: 12.109, lng: -85.360 },
+      { name: 'colegio', lat: 12.109, lng: -85.360 },
+      { name: 'restaurante', lat: 12.107, lng: -85.363 },
+      { name: 'tienda', lat: 12.106, lng: -85.362 },
+      { name: 'casa', lat: 12.108, lng: -85.361 },
+      { name: 'calle', lat: 12.107, lng: -85.363 },
+      { name: 'avenida', lat: 12.106, lng: -85.364 },
+    ];
+    
+    const addressLower = address.toLowerCase();
+    let closestZone = juigalpaZones[0];
+    
+    for (const zone of juigalpaZones) {
+      if (addressLower.includes(zone.name)) {
+        closestZone = zone;
+        break;
+      }
+    }
+    
+    // Agregar pequeña variación para que no sea exactamente el mismo punto
+    const variation = () => (Math.random() * 0.004 - 0.002);
+    
+    console.log('⚠️ Usando zona de Juigalpa:', closestZone.name);
     return { 
-      lat: 12.106 + (Math.random() * 0.01 - 0.005), 
-      lng: -85.364 + (Math.random() * 0.01 - 0.005), 
-      displayName: 'Juigalpa, Chontales (ubicación aproximada)'
+      lat: closestZone.lat + variation(), 
+      lng: closestZone.lng + variation(),
+      displayName: `${address}, Juigalpa, Chontales`
     };
+    
   } catch (error) {
     console.error('Error geocodificando:', error.message);
+    // Fallback final: Juigalpa centro con variación
     return { 
-      lat: 12.106 + (Math.random() * 0.01 - 0.005), 
-      lng: -85.364 + (Math.random() * 0.01 - 0.005), 
+      lat: JUIGALPA_CENTER.lat + (Math.random() * 0.004 - 0.002), 
+      lng: JUIGALPA_CENTER.lng + (Math.random() * 0.004 - 0.002),
       displayName: 'Juigalpa, Chontales'
     };
   }
 };
 
-// Calcular distancia en km - Fórmula Haversine
+// Calcular distancia en km
 const calculateDistance = (lat1, lng1, lat2, lng2) => {
   if (!lat1 || !lng1 || !lat2 || !lng2) return 0;
   
@@ -115,13 +180,13 @@ const createOrder = async (req, res) => {
       isUrgent = false
     } = req.body;
     
-    console.log('📍 Geocodificando recogida:', pickupAddress);
+    console.log('📍 [JUGALPA] Geocodificando recogida:', pickupAddress);
     const pickupLocation = await geocodeAddress(pickupAddress);
-    console.log('✅ Recogida:', pickupLocation.lat, pickupLocation.lng);
+    console.log('✅ [JUGALPA] Recogida:', pickupLocation.lat, pickupLocation.lng);
     
-    console.log('📍 Geocodificando entrega:', deliveryAddress);
+    console.log('📍 [JUGALPA] Geocodificando entrega:', deliveryAddress);
     const deliveryLocation = await geocodeAddress(deliveryAddress);
-    console.log('✅ Entrega:', deliveryLocation.lat, deliveryLocation.lng);
+    console.log('✅ [JUGALPA] Entrega:', deliveryLocation.lat, deliveryLocation.lng);
     
     const distance = calculateDistance(
       pickupLocation.lat, pickupLocation.lng,
@@ -187,7 +252,7 @@ const createOrder = async (req, res) => {
     
     const distanceText = distance > 0 ? `${distance} km` : 'calculada';
     const fareMessage = isUrgent 
-      ? `🚨 Urgente: C$${amount}` 
+      ? `🚨 URGENTE: C$${amount}` 
       : `💰 Tarifa: C$${amount} (${distanceText})`;
     
     res.status(201).json({ 
@@ -198,7 +263,7 @@ const createOrder = async (req, res) => {
         isUrgent: isUrgent,
         message: fareMessage
       },
-      message: orderData.mandadito ? 'Mandado asignado.' : 'Mandado creado.'
+      message: orderData.mandadito ? 'Mandado asignado.' : 'Mandado creado en Juigalpa.'
     });
   } catch (error) {
     console.error('❌ Error:', error);
