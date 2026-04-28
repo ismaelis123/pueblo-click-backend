@@ -7,7 +7,7 @@ const axios = require('axios');
 const geocodeAddress = async (address) => {
   try {
     const response = await axios.get('https://nominatim.openstreetmap.org/search', {
-      params: { q: `${address}, Juigalpa, Chontales, Nicaragua`, format: 'json', limit: 1 },
+      params: { q: `${address}, Juigalpa, Chontales, Nicaragua`, format: 'json', limit: 1, countrycodes: 'ni' },
       headers: { 'User-Agent': 'PuebloClick/1.0' }
     });
     if (response.data && response.data.length > 0) {
@@ -79,25 +79,19 @@ const getOrderDetails = async (req, res) => {
   }
 };
 
-// ==================== ACEPTAR ÓRDENES (CRÉDITO FIJO C$5) ====================
+// ACEPTAR ORDEN - CRÉDITO FIJO C$5
 const acceptOrder = async (req, res) => {
   try {
     const order = await Order.findById(req.params.orderId);
-    
-    if (!order) {
-      return res.status(404).json({ message: 'Orden no encontrada' });
-    }
-    
+    if (!order) return res.status(404).json({ message: 'Orden no encontrada' });
     if (order.status !== 'pending' && order.status !== 'pending_confirmation') {
       return res.status(400).json({ message: 'Orden no disponible' });
     }
-    
-    if (order.status === 'pending_confirmation' && order.mandadito.toString() !== req.user._id.toString()) {
+    if (order.status === 'pending_confirmation' && order.mandadito?.toString() !== req.user._id.toString()) {
       return res.status(403).json({ message: 'No autorizado' });
     }
     
     const COSTO_FIJO = 5;
-    
     if (req.user.credit < COSTO_FIJO) {
       return res.status(400).json({ message: `Crédito insuficiente. Necesitas C$${COSTO_FIJO}` });
     }
@@ -107,10 +101,8 @@ const acceptOrder = async (req, res) => {
     
     order.mandadito = req.user._id;
     order.status = 'accepted';
-    
     if (!order.pickupLocation?.lat) order.pickupLocation = await geocodeAddress(order.pickupAddress);
     if (!order.deliveryLocation?.lat) order.deliveryLocation = await geocodeAddress(order.deliveryAddress);
-    
     await order.save();
     
     const io = req.app.get('io');
@@ -139,7 +131,7 @@ const rejectDirectOrder = async (req, res) => {
   try {
     const order = await Order.findById(req.params.orderId);
     if (!order) return res.status(404).json({ message: 'Orden no encontrada' });
-    if (order.status !== 'pending_confirmation') return res.status(400).json({ message: 'Orden no está esperando confirmación' });
+    if (order.status !== 'pending_confirmation') return res.status(400).json({ message: 'Orden no está esperando' });
     if (!order.mandadito || order.mandadito.toString() !== req.user._id.toString()) return res.status(403).json({ message: 'No autorizado' });
     
     order.mandadito = null;
@@ -148,7 +140,6 @@ const rejectDirectOrder = async (req, res) => {
     
     const io = req.app.get('io');
     if (io) io.emit('orderUpdated', order);
-    
     res.json({ message: 'Orden rechazada' });
   } catch (error) {
     res.status(500).json({ message: error.message });
@@ -160,7 +151,7 @@ const markAsDelivered = async (req, res) => {
     const order = await Order.findById(req.params.orderId);
     if (!order) return res.status(404).json({ message: 'Orden no encontrada' });
     if (!order.mandadito || order.mandadito.toString() !== req.user._id.toString()) return res.status(403).json({ message: 'No autorizado' });
-    if (order.status !== 'accepted') return res.status(400).json({ message: 'La orden no está en estado aceptado' });
+    if (order.status !== 'accepted') return res.status(400).json({ message: 'Orden no está aceptada' });
     
     order.mandaditoDeliveredAt = new Date();
     order.status = 'delivered';
@@ -169,7 +160,7 @@ const markAsDelivered = async (req, res) => {
     const io = req.app.get('io');
     if (io) {
       io.emit('orderUpdated', order);
-      io.to(order.client.toString()).emit('orderDelivered', { order, message: 'Tu pedido ha sido entregado. Por favor confirma.' });
+      io.to(order.client.toString()).emit('orderDelivered', { order, message: 'Tu pedido ha sido entregado.' });
     }
     
     res.json({ order, message: '📦 Pedido marcado como entregado' });
@@ -194,7 +185,7 @@ const requestRecharge = async (req, res) => {
     if (!reference) return res.status(400).json({ message: 'Referencia requerida' });
     
     const deposit = await Deposit.create({ mandadito: req.user._id, amount, reference });
-    res.json({ message: 'Solicitud enviada. Realiza el depósito y espera confirmación.', adminPhone: '85202908', deposit });
+    res.json({ message: 'Solicitud enviada.', adminPhone: '85202908', deposit });
   } catch (error) {
     res.status(500).json({ message: error.message });
   }
@@ -204,7 +195,10 @@ const toggleShareLocation = async (req, res) => {
   try {
     req.user.isSharingLocation = !req.user.isSharingLocation;
     await req.user.save();
-    res.json({ isSharingLocation: req.user.isSharingLocation, message: req.user.isSharingLocation ? 'Compartiendo ubicación' : 'Ubicación desactivada' });
+    res.json({ 
+      isSharingLocation: req.user.isSharingLocation, 
+      message: req.user.isSharingLocation ? 'Compartiendo ubicación' : 'Ubicación desactivada' 
+    });
   } catch (error) {
     res.status(500).json({ message: error.message });
   }
@@ -218,11 +212,19 @@ const updateLocation = async (req, res) => {
     req.user.currentLocation = { lat, lng, accuracy: accuracy || null, lastUpdate: new Date() };
     await req.user.save();
     
-    const activeOrders = await Order.find({ mandadito: req.user._id, status: { $in: ['accepted', 'delivered'] } });
+    const activeOrders = await Order.find({ 
+      mandadito: req.user._id, 
+      status: { $in: ['accepted', 'delivered'] } 
+    });
+    
     const io = req.app.get('io');
     if (io) {
       for (const order of activeOrders) {
-        io.to(order.client.toString()).emit('locationUpdate', { orderId: order._id, location: { lat, lng } });
+        io.to(order.client.toString()).emit('locationUpdate', { 
+          orderId: order._id, 
+          location: { lat, lng },
+          timestamp: new Date()
+        });
       }
     }
     
