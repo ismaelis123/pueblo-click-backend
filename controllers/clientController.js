@@ -273,7 +273,15 @@ const createOrder = async (req, res) => {
 
 const getClientOrders = async (req, res) => {
   try {
-    const orders = await Order.find({ client: req.user._id })
+    // Filtro para ocultar órdenes completadas
+    const { hideCompleted } = req.query;
+    let query = { client: req.user._id };
+    
+    if (hideCompleted === 'true') {
+      query.status = { $ne: 'completed' };
+    }
+    
+    const orders = await Order.find(query)
       .populate('mandadito', 'name phone profilePhoto rating totalRatings currentLocation isSharingLocation')
       .sort({ createdAt: -1 });
     res.json(orders);

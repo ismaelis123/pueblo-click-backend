@@ -58,7 +58,15 @@ const updateWorkSchedule = async (req, res) => {
 
 const getOrders = async (req, res) => {
   try {
-    const orders = await Order.find({ mandadito: req.user._id })
+    // Filtro para ocultar órdenes completadas
+    const { hideCompleted } = req.query;
+    let query = { mandadito: req.user._id };
+    
+    if (hideCompleted === 'true') {
+      query.status = { $ne: 'completed' };
+    }
+    
+    const orders = await Order.find(query)
       .populate('client', 'name phone profilePhoto')
       .sort({ createdAt: -1 });
     res.json(orders);

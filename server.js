@@ -148,6 +148,7 @@ const mandaditoRoutes = require('./routes/mandaditoRoutes');
 const adminRoutes = require('./routes/adminRoutes');
 const messageRoutes = require('./routes/messageRoutes');
 const notificationRoutes = require('./routes/notificationRoutes');
+const complaintRoutes = require('./routes/complaintRoutes');
 
 app.use('/api/auth', authRoutes);
 app.use('/api/client', clientRoutes);
@@ -155,12 +156,13 @@ app.use('/api/mandadito', mandaditoRoutes);
 app.use('/api/admin', adminRoutes);
 app.use('/api/messages', messageRoutes);
 app.use('/api/notifications', notificationRoutes);
+app.use('/api/complaints', complaintRoutes);
 
 // Ruta raíz
 app.get('/', (req, res) => {
   res.json({ 
     message: 'API Pueblo Click funcionando',
-    version: '2.0.0',
+    version: '3.0.0',
     status: 'online',
     timestamp: new Date().toISOString()
   });
