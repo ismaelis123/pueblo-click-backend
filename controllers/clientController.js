@@ -23,9 +23,9 @@ const geocodeAddress = async (address) => {
   }
 };
 
-// Calcular distancia entre dos puntos (fórmula Haversine)
+// Calcular distancia entre dos puntos
 const calculateDistance = (lat1, lng1, lat2, lng2) => {
-  const R = 6371; // Radio de la Tierra en km
+  const R = 6371;
   const dLat = (lat2 - lat1) * Math.PI / 180;
   const dLng = (lng2 - lng1) * Math.PI / 180;
   const a = 
@@ -37,19 +37,17 @@ const calculateDistance = (lat1, lng1, lat2, lng2) => {
 };
 
 // Calcular tarifa según distancia
-const calculateFare = (distanceKm, isUrgent, customPrice) => {
-  if (isUrgent && customPrice) {
-    return customPrice;
+const calculateFare = (distanceKm, isUrgent) => {
+  if (isUrgent) {
+    return 70;
   }
   
-  if (distanceKm <= 2) {
-    return 30;  // Cerca
-  } else if (distanceKm <= 5) {
-    return 40;  // Moderado
-  } else if (distanceKm <= 8) {
-    return 50;  // Largo
+  if (distanceKm <= 1.5) {
+    return 30;
+  } else if (distanceKm <= 3) {
+    return 40;
   } else {
-    return 60;  // Muy largo
+    return 50;
   }
 };
 
@@ -60,15 +58,12 @@ const createOrder = async (req, res) => {
       pickupAddress, 
       deliveryAddress, 
       mandaditoId,
-      isUrgent = false,
-      customPrice = null
+      isUrgent = false
     } = req.body;
     
-    // Geocodificar direcciones
     const pickupLocation = await geocodeAddress(pickupAddress);
     const deliveryLocation = await geocodeAddress(deliveryAddress);
     
-    // Calcular distancia
     let distance = null;
     if (pickupLocation.lat && deliveryLocation.lat) {
       distance = calculateDistance(
@@ -77,8 +72,7 @@ const createOrder = async (req, res) => {
       );
     }
     
-    // Calcular tarifa
-    const amount = calculateFare(distance || 0, isUrgent, customPrice);
+    const amount = calculateFare(distance || 0, isUrgent);
     
     const orderData = {
       client: req.user._id,
@@ -88,8 +82,7 @@ const createOrder = async (req, res) => {
       pickupLocation,
       deliveryLocation,
       distance,
-      isUrgent,
-      customPrice: isUrgent ? customPrice : null,
+      isUrgent: isUrgent || false,
       amount,
     };
     
@@ -124,13 +117,12 @@ const createOrder = async (req, res) => {
       await notifyNewOrderToMandaditos(order, req.user.name);
     }
     
-    // Mensaje con información de tarifa
     let fareMessage = '';
     if (isUrgent) {
-      fareMessage = `Tarifa urgente personalizada: C$${amount}`;
+      fareMessage = `🚨 Tarifa urgente: C$${amount}`;
     } else {
-      const distanceText = distance ? `${distance.toFixed(1)} km` : 'distancia no calculada';
-      fareMessage = `Tarifa estimada: C$${amount} (${distanceText})`;
+      const distanceText = distance ? `${distance.toFixed(1)} km` : 'distancia calculada';
+      fareMessage = `💰 Tarifa: C$${amount} (${distanceText})`;
     }
     
     res.status(201).json({ 
@@ -149,7 +141,6 @@ const createOrder = async (req, res) => {
   }
 };
 
-// ... (resto de funciones existentes sin cambios)
 const getClientOrders = async (req, res) => {
   try {
     const orders = await Order.find({ client: req.user._id })
@@ -168,7 +159,6 @@ const getAvailableMandaditos = async (req, res) => {
       isActive: true,
       isVerified: true
     }).select('name phone profilePhoto rating totalRatings isAvailable motoPhotos workSchedule currentLocation');
-    
     res.json(mandaditos);
   } catch (error) {
     res.status(500).json({ message: error.message });
